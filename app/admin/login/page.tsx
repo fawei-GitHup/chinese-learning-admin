@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { Suspense } from "react";
 import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,25 @@ function GoogleIcon({ className }: { className?: string }) {
   );
 }
 
-export default function AdminLoginPage() {
+// Loading fallback component
+function LoginLoading() {
+  return (
+    <div className="flex min-h-screen items-center justify-center p-4 bg-background">
+      <div className="w-full max-w-md">
+        <div className="mb-8 flex flex-col items-center">
+          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground text-2xl font-bold mb-4">
+            C
+          </div>
+          <h1 className="text-2xl font-bold text-foreground">Admin Console</h1>
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Main login content component that uses useSearchParams
+function AdminLoginContent() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Pre-fill with admin credentials from environment variable for development convenience
@@ -203,5 +221,14 @@ export default function AdminLoginPage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+// Main page component wrapped with Suspense boundary
+export default function AdminLoginPage() {
+  return (
+    <Suspense fallback={<LoginLoading />}>
+      <AdminLoginContent />
+    </Suspense>
   );
 }
