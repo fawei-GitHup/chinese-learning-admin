@@ -81,7 +81,8 @@ import {
   type ConversationLine,
 } from "@/lib/admin-mock";
 
-const generateId = () => `sc_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+// Generate a standard UUID v4 format compatible with Supabase UUID column
+const generateId = () => crypto.randomUUID();
 
 const CATEGORIES = ["急诊", "挂号", "问诊", "检查", "用药", "缴费", "药房"];
 const DIFFICULTIES = ["Beginner", "Intermediate", "Advanced"] as const;
@@ -716,8 +717,8 @@ export default function ScenariosPage() {
                   {t("关键短语", "Key Phrases")}
                 </h3>
                 <ChipInput
-                  values={editEntry.key_phrases}
-                  onChange={(values) => setEditEntry({ ...editEntry, key_phrases: values })}
+                  value={editEntry.key_phrases}
+                  onChange={(value) => setEditEntry({ ...editEntry, key_phrases: value })}
                   disabled={isViewMode}
                   placeholder={t("输入后按回车", "Type and press Enter")}
                 />
@@ -729,8 +730,8 @@ export default function ScenariosPage() {
                   {t("检查清单", "Checklist")}
                 </h3>
                 <ChipInput
-                  values={editEntry.checklist}
-                  onChange={(values) => setEditEntry({ ...editEntry, checklist: values })}
+                  value={editEntry.checklist}
+                  onChange={(value) => setEditEntry({ ...editEntry, checklist: value })}
                   disabled={isViewMode}
                   placeholder={t("输入后按回车", "Type and press Enter")}
                 />

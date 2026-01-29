@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Rocket,
   AlertTriangle,
@@ -16,10 +16,16 @@ import {
   Database,
   Sparkles,
   Stethoscope,
+  CheckSquare,
+  Square,
+  Archive,
+  Upload,
+  Loader2,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Table,
   TableBody,
@@ -28,7 +34,18 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useAdminLocale } from "@/lib/admin-locale";
+import { useAuth, canPublish, canArchive } from "@/lib/auth-context";
 import {
   validatePublishing,
   calculatePublishingStats,
@@ -36,7 +53,7 @@ import {
   type ContentRow,
   type ValidationResult,
 } from "@/lib/publishing";
-import { fetchAllContent, fetchRecentlyPublished, type FetchResult } from "./actions";
+import { fetchAllContent, fetchRecentlyPublished, batchPublish, batchArchive, type FetchResult, type BatchOperationResult } from "./actions";
 import { toast } from "sonner";
 import Link from "next/link";
 
@@ -45,13 +62,31 @@ interface ProblematicRow extends ContentRow {
   validation: ValidationResult;
 }
 
+interface SelectableRow extends ContentRow {
+  type: "lexicon" | "grammar" | "scenario" | "medical_lexicon";
+}
+
+type BatchAction = "publish" | "archive";
+
 export default function PublishCenterPage() {
   const { locale } = useAdminLocale();
+  const { user } = useAuth();
   const t = (zh: string, en: string) => (locale === "zh" ? zh : en);
 
   const [isLoading, setIsLoading] = useState(true);
   const [data, setData] = useState<FetchResult | null>(null);
   const [recentlyPublished, setRecentlyPublished] = useState<Array<ContentRow & { type: string }>>([]);
+  
+  // Selection state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
+  
+  // Batch operation state
+  const [batchDialogOpen, setBatchDialogOpen] = useState(false);
+  const [pendingBatchAction, setPendingBatchAction] = useState<BatchAction | null>(null);
+  const [isBatchProcessing, setIsBatchProcessing] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(null);
+  const [batchResult, setBatchResult] = useState<BatchOperationResult | null>(null);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -63,20 +98,171 @@ export default function PublishCenterPage() {
       setData(contentResult);
       setRecentlyPublished(recentResult.items);
       if (contentResult.error) {
-        toast.warning("使用本地数据", "Using local data", {
+        toast.warning(locale === "zh" ? "使用本地数据" : "Using local data", {
           description: contentResult.error,
         });
       }
     } catch {
-      toast.error("加载失败", "Failed to load");
+      toast.error(locale === "zh" ? "加载失败" : "Failed to load");
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [locale]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Get all content rows for selection
+  const allRows = useMemo<SelectableRow[]>(() => {
+    if (!data) return [];
+    const rows: SelectableRow[] = [];
+    
+    for (const item of data.lexicon) {
+      rows.push({ ...item, type: "lexicon" });
+    }
+    for (const item of data.grammar) {
+      rows.push({ ...item, type: "grammar" });
+    }
+    for (const item of data.scenarios) {
+      rows.push({ ...item, type: "scenario" });
+    }
+    for (const item of data.medicalLexicon) {
+      rows.push({ ...item, type: "medical_lexicon" });
+    }
+    
+    return rows;
+  }, [data]);
+
+  // Filter rows by status for batch operations
+  const publishableRows = useMemo(() => 
+    allRows.filter(row => row.publishing.status === "draft" || row.publishing.status === "in_review"),
+  [allRows]);
+  
+  const archivableRows = useMemo(() => 
+    allRows.filter(row => row.publishing.status === "published"),
+  [allRows]);
+
+  // Selected items grouped by action type
+  const selectedForPublish = useMemo(() => 
+    Array.from(selectedIds).filter(id => 
+      publishableRows.some(row => row.id === id)
+    ),
+  [selectedIds, publishableRows]);
+
+  const selectedForArchive = useMemo(() => 
+    Array.from(selectedIds).filter(id => 
+      archivableRows.some(row => row.id === id)
+    ),
+  [selectedIds, archivableRows]);
+
+  // Selection handlers
+  const handleSelectAll = useCallback(() => {
+    if (selectedIds.size === allRows.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(allRows.map(row => row.id)));
+    }
+  }, [allRows, selectedIds.size]);
+
+  const handleSelectRow = useCallback((id: string, index: number, shiftKey: boolean) => {
+    setSelectedIds(prev => {
+      const newSet = new Set(prev);
+      
+      // Shift+Click for range selection
+      if (shiftKey && lastSelectedIndex !== null) {
+        const start = Math.min(lastSelectedIndex, index);
+        const end = Math.max(lastSelectedIndex, index);
+        for (let i = start; i <= end; i++) {
+          newSet.add(allRows[i].id);
+        }
+      } else {
+        // Toggle single selection
+        if (newSet.has(id)) {
+          newSet.delete(id);
+        } else {
+          newSet.add(id);
+        }
+      }
+      
+      return newSet;
+    });
+    setLastSelectedIndex(index);
+  }, [allRows, lastSelectedIndex]);
+
+  // Batch action handlers
+  const handleBatchPublishClick = useCallback(() => {
+    if (selectedForPublish.length === 0) {
+      toast.error(t("没有可发布的选中项", "No publishable items selected"), {
+        description: t("请选择状态为 draft 或 in_review 的内容", "Please select items with draft or in_review status"),
+      });
+      return;
+    }
+    setPendingBatchAction("publish");
+    setBatchDialogOpen(true);
+  }, [selectedForPublish.length, t]);
+
+  const handleBatchArchiveClick = useCallback(() => {
+    if (selectedForArchive.length === 0) {
+      toast.error(t("没有可归档的选中项", "No archivable items selected"), {
+        description: t("请选择状态为 published 的内容", "Please select items with published status"),
+      });
+      return;
+    }
+    setPendingBatchAction("archive");
+    setBatchDialogOpen(true);
+  }, [selectedForArchive.length, t]);
+
+  const handleConfirmBatchAction = useCallback(async () => {
+    if (!pendingBatchAction || !user) return;
+
+    const contentIds = pendingBatchAction === "publish" ? selectedForPublish : selectedForArchive;
+    
+    setIsBatchProcessing(true);
+    setBatchProgress({ current: 0, total: contentIds.length });
+    
+    try {
+      let result: BatchOperationResult;
+      
+      if (pendingBatchAction === "publish") {
+        result = await batchPublish(contentIds, user.id);
+      } else {
+        result = await batchArchive(contentIds, user.id);
+      }
+      
+      setBatchResult(result);
+      
+      // Show result toast
+      if (result.failed.length === 0) {
+        toast.success(
+          t(`成功${pendingBatchAction === "publish" ? "发布" : "归档"} ${result.success.length} 项`, 
+            `Successfully ${pendingBatchAction === "publish" ? "published" : "archived"} ${result.success.length} items`)
+        );
+      } else {
+        toast.warning(
+          t(`${result.success.length} 项成功，${result.failed.length} 项失败`,
+            `${result.success.length} succeeded, ${result.failed.length} failed`)
+        );
+      }
+      
+      // Clear selection and refresh data
+      setSelectedIds(new Set());
+      await loadData();
+    } catch (err) {
+      toast.error(t("批量操作失败", "Batch operation failed"), {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    } finally {
+      setIsBatchProcessing(false);
+      setBatchProgress(null);
+      setBatchDialogOpen(false);
+      setPendingBatchAction(null);
+    }
+  }, [pendingBatchAction, user, selectedForPublish, selectedForArchive, loadData, t]);
+
+  // Permission checks
+  const canPerformPublish = user ? canPublish(user.role) : false;
+  const canPerformArchive = user ? canArchive(user.role) : false;
 
   if (isLoading || !data) {
     return (
@@ -199,6 +385,44 @@ export default function PublishCenterPage() {
     return item.title || item.term || item.slug;
   };
 
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case "published":
+        return (
+          <Badge className="bg-success/20 text-success border-success/30">
+            <CheckCircle className="mr-1 h-3 w-3" />
+            {t("已发布", "Published")}
+          </Badge>
+        );
+      case "in_review":
+        return (
+          <Badge className="bg-warning/20 text-warning border-warning/30">
+            <Clock className="mr-1 h-3 w-3" />
+            {t("待审核", "In Review")}
+          </Badge>
+        );
+      case "archived":
+        return (
+          <Badge className="bg-muted/50 text-muted-foreground border-muted">
+            <Archive className="mr-1 h-3 w-3" />
+            {t("已归档", "Archived")}
+          </Badge>
+        );
+      default:
+        return (
+          <Badge variant="outline" className="text-muted-foreground">
+            {t("草稿", "Draft")}
+          </Badge>
+        );
+    }
+  };
+
+  // Get items to display in batch confirm dialog
+  const getSelectedItemsForDialog = () => {
+    const targetIds = pendingBatchAction === "publish" ? selectedForPublish : selectedForArchive;
+    return allRows.filter(row => targetIds.includes(row.id));
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -230,6 +454,66 @@ export default function PublishCenterPage() {
           </Button>
         </div>
       </div>
+
+      {/* Batch Operations Bar */}
+      {selectedIds.size > 0 && (
+        <Card className="glass-card border-primary/30 bg-primary/5 rounded-2xl">
+          <CardContent className="py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <Badge variant="secondary" className="px-3 py-1 text-sm">
+                  <CheckSquare className="mr-2 h-4 w-4" />
+                  {t(`已选择 ${selectedIds.size} 项`, `${selectedIds.size} items selected`)}
+                </Badge>
+                <span className="text-sm text-muted-foreground">
+                  {selectedForPublish.length > 0 && (
+                    <span className="mr-3">
+                      {t(`${selectedForPublish.length} 可发布`, `${selectedForPublish.length} publishable`)}
+                    </span>
+                  )}
+                  {selectedForArchive.length > 0 && (
+                    <span>
+                      {t(`${selectedForArchive.length} 可归档`, `${selectedForArchive.length} archivable`)}
+                    </span>
+                  )}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {canPerformPublish && (
+                  <Button
+                    onClick={handleBatchPublishClick}
+                    disabled={selectedForPublish.length === 0 || isBatchProcessing}
+                    className="rounded-xl"
+                  >
+                    <Upload className="mr-2 h-4 w-4" />
+                    {t("批量发布", "Batch Publish")}
+                    {selectedForPublish.length > 0 && ` (${selectedForPublish.length})`}
+                  </Button>
+                )}
+                {canPerformArchive && (
+                  <Button
+                    variant="outline"
+                    onClick={handleBatchArchiveClick}
+                    disabled={selectedForArchive.length === 0 || isBatchProcessing}
+                    className="rounded-xl"
+                  >
+                    <Archive className="mr-2 h-4 w-4" />
+                    {t("批量归档", "Batch Archive")}
+                    {selectedForArchive.length > 0 && ` (${selectedForArchive.length})`}
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  onClick={() => setSelectedIds(new Set())}
+                  className="rounded-xl"
+                >
+                  {t("清除选择", "Clear Selection")}
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Overview KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -368,6 +652,103 @@ export default function PublishCenterPage() {
           </Card>
         ))}
       </div>
+
+      {/* All Content List with Selection */}
+      <Card className="glass-card border-border/50 rounded-2xl">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <CheckSquare className="h-5 w-5 text-primary" />
+            {t("全部内容", "All Content")}
+          </CardTitle>
+          <CardDescription>
+            {t("选择内容进行批量操作，支持 Shift+Click 范围选择", "Select content for batch operations, Shift+Click for range selection")}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow className="border-border/50 hover:bg-transparent">
+                <TableHead className="w-12">
+                  <Checkbox
+                    checked={selectedIds.size === allRows.length && allRows.length > 0}
+                    onCheckedChange={handleSelectAll}
+                    aria-label={t("全选", "Select all")}
+                  />
+                </TableHead>
+                <TableHead className="text-muted-foreground">{t("类型", "Type")}</TableHead>
+                <TableHead className="text-muted-foreground">{t("标题", "Title")}</TableHead>
+                <TableHead className="text-muted-foreground">{t("状态", "Status")}</TableHead>
+                <TableHead className="text-muted-foreground">{t("发布就绪", "Publish Ready")}</TableHead>
+                <TableHead className="text-muted-foreground">{t("更新时间", "Updated")}</TableHead>
+                <TableHead className="text-muted-foreground">{t("操作", "Action")}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {allRows.map((item, index) => {
+                const validation = validatePublishing(item.publishing);
+                const isSelected = selectedIds.has(item.id);
+                
+                return (
+                  <TableRow 
+                    key={`${item.type}-${item.id}`} 
+                    className={`border-border/30 cursor-pointer ${isSelected ? "bg-primary/10" : "hover:bg-secondary/30"}`}
+                    onClick={(e) => handleSelectRow(item.id, index, e.shiftKey)}
+                  >
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={isSelected}
+                        onCheckedChange={() => handleSelectRow(item.id, index, false)}
+                        aria-label={t("选择", "Select")}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        {getTypeIcon(item.type)}
+                        <span className="text-sm">{getTypeLabel(item.type)}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="font-medium text-foreground max-w-[200px] truncate">
+                      {getTitle(item)}
+                    </TableCell>
+                    <TableCell>
+                      {getStatusBadge(item.publishing.status)}
+                    </TableCell>
+                    <TableCell>
+                      {validation.isPublishable ? (
+                        <Badge className="bg-success/20 text-success border-success/30">
+                          <CheckCircle className="mr-1 h-3 w-3" />
+                          {t("就绪", "Ready")}
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-destructive/20 text-destructive border-destructive/30">
+                          <XCircle className="mr-1 h-3 w-3" />
+                          {t("未就绪", "Not Ready")}
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-sm">
+                      {formatDate(item.updated_at)}
+                    </TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="rounded-lg text-primary hover:text-primary hover:bg-primary/10"
+                        asChild
+                      >
+                        <Link href={getEditLink(item.type)}>
+                          {t("编辑", "Edit")}
+                          <ExternalLink className="ml-1 h-3 w-3" />
+                        </Link>
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
 
       {/* Problematic Rows */}
       <Card className="glass-card border-border/50 rounded-2xl">
@@ -582,6 +963,110 @@ const { data } = await supabase
           </div>
         </CardContent>
       </Card>
+
+      {/* Batch Confirm Dialog */}
+      <AlertDialog open={batchDialogOpen} onOpenChange={setBatchDialogOpen}>
+        <AlertDialogContent className="max-w-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pendingBatchAction === "publish" 
+                ? t("确认批量发布", "Confirm Batch Publish")
+                : t("确认批量归档", "Confirm Batch Archive")}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingBatchAction === "publish"
+                ? t(`以下 ${selectedForPublish.length} 项内容将被发布：`, `The following ${selectedForPublish.length} items will be published:`)
+                : t(`以下 ${selectedForArchive.length} 项内容将被归档：`, `The following ${selectedForArchive.length} items will be archived:`)}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          
+          <div className="max-h-[300px] overflow-y-auto border rounded-lg">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t("类型", "Type")}</TableHead>
+                  <TableHead>{t("标题", "Title")}</TableHead>
+                  <TableHead>{t("当前状态", "Current Status")}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {getSelectedItemsForDialog().map((item) => (
+                  <TableRow key={item.id}>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        {getTypeIcon(item.type)}
+                        <span className="text-sm">{getTypeLabel(item.type)}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="font-medium">{getTitle(item)}</TableCell>
+                    <TableCell>{getStatusBadge(item.publishing.status)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+
+          {batchProgress && (
+            <div className="mt-4">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {t(`处理中: ${batchProgress.current}/${batchProgress.total}`, 
+                   `Processing: ${batchProgress.current}/${batchProgress.total}`)}
+              </div>
+              <div className="mt-2 h-2 rounded-full bg-secondary overflow-hidden">
+                <div 
+                  className="h-full bg-primary transition-all"
+                  style={{ width: `${(batchProgress.current / batchProgress.total) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {batchResult && batchResult.failed.length > 0 && (
+            <div className="mt-4 p-3 rounded-lg bg-destructive/10 border border-destructive/30">
+              <p className="text-sm font-medium text-destructive mb-2">
+                {t(`${batchResult.failed.length} 项操作失败:`, `${batchResult.failed.length} items failed:`)}
+              </p>
+              <ul className="text-xs text-destructive space-y-1">
+                {batchResult.failed.slice(0, 5).map((fail) => (
+                  <li key={fail.id}>• {fail.error}</li>
+                ))}
+                {batchResult.failed.length > 5 && (
+                  <li>... {t(`还有 ${batchResult.failed.length - 5} 项`, `and ${batchResult.failed.length - 5} more`)}</li>
+                )}
+              </ul>
+            </div>
+          )}
+
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isBatchProcessing}>
+              {t("取消", "Cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleConfirmBatchAction}
+              disabled={isBatchProcessing}
+              className={pendingBatchAction === "archive" ? "bg-warning hover:bg-warning/90" : ""}
+            >
+              {isBatchProcessing ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  {t("处理中...", "Processing...")}
+                </>
+              ) : pendingBatchAction === "publish" ? (
+                <>
+                  <Upload className="mr-2 h-4 w-4" />
+                  {t("确认发布", "Confirm Publish")}
+                </>
+              ) : (
+                <>
+                  <Archive className="mr-2 h-4 w-4" />
+                  {t("确认归档", "Confirm Archive")}
+                </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

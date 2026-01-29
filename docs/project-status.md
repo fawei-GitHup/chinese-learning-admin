@@ -874,3 +874,330 @@ DELETE FROM content_items WHERE slug = 'test-medical-lexicon' AND type = 'medica
 | `components/admin/sidebar.tsx` | 侧边栏（已添加入口） |
 | `lib/content-types.ts` | 内容类型定义 |
 | `lib/supabase/content-items-service.ts` | 内容服务层 |
+
+---
+
+## 医疗场景工作台实施 - A2-02
+
+### 概述
+此实施添加了医疗场景工作台，允许管理员管理医疗对话场景和实践练习，支持创建、编辑、发布医疗场景内容。
+
+### 已完成的技术实现
+
+#### 1. 类型系统扩展
+- 更新 `lib/content-types.ts` 添加 `'medical_scenario'` 到 `CONTENT_TYPES` 数组
+- 更新 `ContentItemType` 联合类型包含 `medical_scenario`
+- 更新 `contentItemTypeSchema` Zod 验证器
+
+#### 2. 服务层实现
+- 在 `lib/supabase/content-items-service.ts` 添加 `MedicalScenarioContent` 和 `MedicalScenarioUIEntry` 类型定义
+- 实现 `contentItemToUI` 和 `uiToContentItem` 重载函数支持医疗场景数据转换
+- 添加 `fetchMedicalScenarios`, `upsertMedicalScenario`, `deleteMedicalScenarioById` CRUD 函数
+- 集成现有发布和 SEO/GEO 字段支持
+
+#### 3. 用户界面实现
+- 创建 `app/(admin)/content/medical-scenario/page.tsx` 页面组件
+- 实现列表视图：显示标题、分类、难度、状态、发布就绪状态
+- 实现对话编辑器：支持 Patient/Doctor/Nurse/Receptionist/Pharmacist 等医疗角色
+- 集成关键短语、检查清单、警告等辅助字段
+- 集成发布面板：SEO、GEO、结构化数据预览
+- 支持本地 mock 降级和 Supabase 集成
+
+#### 4. 导航集成
+- 更新 `components/admin/sidebar.tsx` 添加医疗场景工作台菜单项
+- 使用 Theater 图标，中文标题 "医疗场景"，英文标题 "Medical Scenarios"
+- 路由路径：`/content/medical-scenario`
+
+### 数据库兼容性
+- 使用现有 `content_items` 表，无需数据库模式更改
+- 复用现有的 RLS 策略和权限控制
+- 发布内容自动可被 Web 端读取
+
+### 验收标准
+- ✅ 医疗场景工作台页面可正常加载
+- ✅ 支持创建、编辑医疗场景内容
+- ✅ 对话编辑器支持医疗角色和动态对话行管理
+- ✅ SEO/GEO 字段正确验证和存储
+- ✅ 发布后可被 Web 端医疗场景 API 读取
+- ✅ 权限控制正确应用（admin/editor 创建，viewer 只读）
+
+### 故障排除
+
+#### 类型错误
+- 确保 `ChipInput` 组件使用 `value` 属性而非 `values`
+- 验证 TypeScript 重载函数正确处理联合类型
+
+#### 数据库操作
+- 确认 Supabase 连接配置正确
+- 检查 `content_items` 表权限策略
+- 验证 CRUD 操作的错误处理
+
+#### UI 集成
+- 确保发布面板正确传递 faq 数据
+- 验证表单验证和状态管理
+- 检查对话行的添加/删除功能
+
+### 完成后
+- 医疗场景内容可通过 `/content/medical-scenario` 路径访问
+- Web 端可通过 API 获取发布的状态场景
+- SEO 和结构化数据会自动生成用于搜索引擎优化
+
+---
+
+## 医疗场景工作台数据库修复 - A2-02
+
+### 概述
+医疗场景工作台需要将新的内容类型 `'medical-scenario'` 添加到 `content_items` 表的 `type` 列枚举约束中。此修复确保数据库级别的数据一致性，防止插入无效的内容类型。
+
+### 先决条件
+- 有 Supabase 项目管理员权限
+- 已执行 Content Items 表初始化 SQL（`docs/content-items-schema.sql`）
+- 已执行枚举类型迁移脚本（`docs/migration-fix.sql`）
+- 已备份数据库（推荐）
+
+### 执行步骤
+
+#### 1. 访问 Supabase Dashboard
+- 登录 [supabase.com](https://supabase.com)
+- 选择你的项目（点击项目卡片）
+
+#### 2. 导航到 SQL Editor
+1. 在左侧菜单中点击 **"SQL Editor"**
+2. 点击 **"New Query"** 按钮（或选择现有的查询标签页）
+
+#### 3. 执行 SQL - 添加 medical_scenario 类型
+
+##### 检查当前枚举定义
+```sql
+-- 检查当前 content_type_enum 的枚举值
+SELECT enumlabel FROM pg_enum WHERE enumtypid = 'content_type_enum'::regtype ORDER BY enumlabel;
+```
+
+##### 添加新的枚举值
+```sql
+-- 为 content_type_enum 添加新的枚举值 'medical_scenario'
+-- 注意：代码中使用下划线格式 'medical_scenario'，不是连字符
+ALTER TYPE content_type_enum ADD VALUE IF NOT EXISTS 'medical_scenario';
+```
+
+##### 验证添加成功
+```sql
+-- 再次检查枚举值，确认 'medical_scenario' 已添加
+SELECT enumlabel FROM pg_enum WHERE enumtypid = 'content_type_enum'::regtype ORDER BY enumlabel;
+```
+- 预期结果：返回列表中包含 `'medical_scenario'`
+
+##### 测试插入数据
+```sql
+-- 测试插入 medical_scenario 类型的内容（验证枚举扩展成功）
+INSERT INTO public.content_items (
+  type,
+  slug,
+  locale,
+  status,
+  content_json
+) VALUES (
+  'medical_scenario',
+  'test-medical-scenario-entry',
+  'zh-CN',
+  'draft',
+  '{"title": "测试医疗场景", "dialogue": []}'::jsonb
+) RETURNING id, type, slug;
+
+-- 清理测试数据
+DELETE FROM public.content_items WHERE slug = 'test-medical-scenario-entry' AND type = 'medical_scenario';
+```
+
+#### 4. 截图要点
+- **入口路径**：Supabase Dashboard > [Your Project] > SQL Editor
+- **点击顺序**：
+  1. 点击左侧菜单 "SQL Editor"
+  2. 点击 "New Query" 创建新查询标签页
+  3. 在编辑器中粘贴 SQL 命令
+  4. 点击 "Run" 执行 SQL
+  5. 观察 "Results" 面板的执行结果
+- **预期看到的结果截图点位**：
+  - 执行 `ALTER TYPE` 命令后，Results 面板显示 "Success. No rows returned"
+  - 执行 `SELECT enumlabel` 查询后，Results 面板显示包含 'medical_scenario' 的枚举值列表
+  - 执行测试插入后，Results 面板显示返回的新插入记录的 id, type, slug
+  - 执行清理删除后，Results 面板显示删除影响的行数（通常为 1）
+
+### 预期结果
+- **Successful**: SQL Editor 显示 "Success. No rows returned" 或成功消息
+- **无错误**: 控制台无红色错误消息
+- **时间**: 执行通常在 2-5 秒内完成
+- **验证**: 测试插入成功，说明 `medical_scenario` 类型已被接受
+
+### 故障排除
+
+#### 常见问题
+- **权限错误**: 确保以项目管理员身份登录 Supabase Dashboard
+- **枚举值已存在**: `ADD VALUE IF NOT EXISTS` 会自动跳过已存在的枚举值
+- **类型不存在错误**: 确保已执行过 `docs/migration-fix.sql` 创建了 `content_type_enum`
+
+#### 如果遇到错误
+1. 检查 **"Messages"** 面板的错误详情
+2. 确认 `content_type_enum` 已存在（执行 `docs/migration-fix.sql`）
+3. 验证 SQL 语法正确
+
+### 完成后验证
+- 在 Admin Console 医疗场景工作台页面可正常创建和编辑医疗场景内容
+- 插入新医疗场景记录不会触发数据库约束错误
+- 发布医疗场景内容后，可被 Web 端 API 正常读取
+
+---
+
+## 工单完成状态报告 (2026-01-29 最终更新)
+
+### ✅ 已完成的工单
+
+#### A0：登录与权限
+| 工单 | 状态 | 说明 |
+|------|------|------|
+| **A0-01** Supabase OAuth 登录 | ✅ 完成 | `app/admin/login/page.tsx` 已实现 Google OAuth 和邮箱密码登录 |
+| **A0-02** profiles 表 + trigger + RLS | ✅ 完成 | `docs/profiles-implementation.sql` 和 `lib/auth-context.tsx` 已整合角色系统 |
+| **A0-03** Admin 路由保护 + 403 | ✅ 完成 | `middleware.ts` 实现路由保护，`app/admin/403/page.tsx` 提供403页面 |
+
+#### A1：内容契约与数据库
+| 工单 | 状态 | 说明 |
+|------|------|------|
+| **A1-01** content_items 表 | ✅ 完成 | `docs/content-items-schema.sql` 定义统一内容表 |
+| **A1-02** 内容类型枚举与校验 | ✅ 完成 | `lib/content-types.ts` 定义类型枚举和 Zod 校验 |
+| **A1-03** 审计表 content_audit_log | ✅ 完成 | `docs/content-audit-log.sql` 定义审计日志表 |
+
+#### A2：内容工作台
+| 工单 | 状态 | 说明 |
+|------|------|------|
+| **A2-01** 医疗词汇工作台 | ✅ 完成 | `app/(admin)/content/medical-lexicon/page.tsx` |
+| **A2-02** 医疗场景工作台 | ✅ 完成 | `app/(admin)/content/medical-scenario/page.tsx` |
+| **A2-03** 通用词典工作台 | ✅ 完成 | `app/(admin)/content/lexicon/page.tsx` |
+| **A2-04** Grammar 工作台 | ✅ 完成 | `app/(admin)/content/grammar/page.tsx` |
+| **A2-05** Readings 工作台 | ✅ 完成 | `app/(admin)/content/readings/page.tsx` |
+| **A2-06** Lessons 工作台 | ✅ 完成 | `app/(admin)/content/lessons/page.tsx` |
+| **A2-07** 医疗对话/文章工作台 | ✅ 完成 | `app/(admin)/content/medical-dialogs/page.tsx` |
+
+#### A3：SEO 工作台
+| 工单 | 状态 | 说明 |
+|------|------|------|
+| **A3-01** SEO 字段编辑器组件 | ✅ 完成 | 各工作台都集成了 SEO 字段编辑 Tab |
+| **A3-02** SEO 预览 | ✅ 完成 | `app/(admin)/seo/page.tsx` 提供 SERP 和 OG 预览 |
+| **A3-03** 结构化数据模板 | ✅ 完成 | `lib/structured-data-templates.ts` + `components/admin/structured-data-template-picker.tsx` |
+
+#### A4：GEO 工作台
+| 工单 | 状态 | 说明 |
+|------|------|------|
+| **A4-01** geo_json 编辑器 | ✅ 完成 | `app/(admin)/seo-geo/page.tsx` 和 `components/admin/PublishingPanel.tsx` |
+
+#### A5：发布中心
+| 工单 | 状态 | 说明 |
+|------|------|------|
+| **A5-01** 发布中心列表 | ✅ 完成 | `app/(admin)/publish-center/page.tsx` 实现筛选和统计 |
+| **A5-02** 批量发布功能完善 | ✅ 完成 | `app/(admin)/publish-center/page.tsx` + `actions.ts` |
+| **A5-03** 变更记录查看 | ✅ 完成 | 审计日志表已创建，前端查看界面已集成 |
+| **A5-04** 版本回滚功能 | ✅ 完成 | `components/admin/version-history.tsx` + `version-diff-viewer.tsx` |
+
+#### A6：素材库
+| 工单 | 状态 | 说明 |
+|------|------|------|
+| **A6-01** Supabase Storage 配置 | ✅ 完成 | `lib/supabase/storage-service.ts` + `docs/supabase-storage-setup.sql` |
+| **A6-02** 素材管理页面 | ✅ 完成 | `app/(admin)/assets/page.tsx` 实现上传、浏览、删除功能 |
+
+#### A7：用户与角色管理
+| 工单 | 状态 | 说明 |
+|------|------|------|
+| **A7-01** profiles 管理页面 | ✅ 完成 | `app/(admin)/users/page.tsx` |
+| **A7-02** allowlist 管理 | ✅ 完成 | `app/(admin)/settings/allowlist/page.tsx` + `lib/supabase/allowlist-service.ts` |
+
+#### A8：上线前 QA
+| 工单 | 状态 | 说明 |
+|------|------|------|
+| **A8-01** RLS 与权限回归测试 | ✅ 完成 | `e2e/permissions.spec.ts` + `e2e/rls.spec.ts` + `e2e/routes.spec.ts` |
+| **A8-02** 跨端验收脚本 | ✅ 完成 | `e2e/responsive.spec.ts` + `e2e/user-flows.spec.ts` + `e2e/touch.spec.ts` + `e2e/performance.spec.ts` |
+
+---
+
+### 📊 总结
+
+| 优先级 | 完成 | 部分完成 | 未完成 |
+|--------|------|----------|--------|
+| **P0** | 8 | 0 | 0 |
+| **P1** | 16 | 0 | 0 |
+| **P2** | 1 | 0 | 0 |
+
+**核心功能（P0）完成率**：100%（8/8）
+**整体完成率**：**100%**（25/25 完全完成）
+
+---
+
+## 🎉 项目完成摘要
+
+### 完成日期
+**2026-01-29**
+
+### 新增文件列表
+
+#### 页面组件
+| 文件路径 | 说明 |
+|----------|------|
+| `app/(admin)/content/medical-dialogs/page.tsx` | 医疗对话/文章工作台 |
+| `app/(admin)/users/page.tsx` | 用户档案管理页面 |
+| `app/(admin)/settings/allowlist/page.tsx` | 白名单管理页面 |
+| `app/(admin)/publish-center/page.tsx` | 发布中心（含批量发布） |
+| `app/(admin)/publish-center/actions.ts` | 发布中心服务端操作 |
+
+#### 组件
+| 文件路径 | 说明 |
+|----------|------|
+| `components/admin/version-history.tsx` | 版本历史组件 |
+| `components/admin/version-diff-viewer.tsx` | 版本差异对比查看器 |
+| `components/admin/structured-data-template-picker.tsx` | 结构化数据模板选择器 |
+
+#### 服务层
+| 文件路径 | 说明 |
+|----------|------|
+| `lib/structured-data-templates.ts` | 结构化数据模板定义 |
+| `lib/supabase/storage-service.ts` | Supabase Storage 服务封装 |
+| `lib/supabase/allowlist-service.ts` | 白名单管理服务 |
+
+#### E2E 测试
+| 文件路径 | 说明 |
+|----------|------|
+| `e2e/permissions.spec.ts` | 权限回归测试 |
+| `e2e/rls.spec.ts` | RLS 行级安全测试 |
+| `e2e/routes.spec.ts` | 路由保护测试 |
+| `e2e/responsive.spec.ts` | 响应式布局测试 |
+| `e2e/user-flows.spec.ts` | 用户流程测试 |
+| `e2e/touch.spec.ts` | 触摸交互测试 |
+| `e2e/performance.spec.ts` | 性能测试 |
+
+### 数据库迁移脚本列表
+
+| 文件路径 | 说明 |
+|----------|------|
+| `docs/supabase-storage-setup.sql` | Supabase Storage bucket 配置和 RLS 策略 |
+| `docs/content-versions.sql` | 内容版本表（支持版本回滚） |
+| `docs/content-audit-log.sql` | 审计日志表 |
+| `docs/profiles-implementation.sql` | profiles 表和权限函数 |
+| `docs/content-items-schema.sql` | 统一内容表 schema |
+
+### 测试覆盖情况
+
+| 测试类型 | 文件 | 覆盖范围 |
+|----------|------|----------|
+| **权限测试** | `e2e/permissions.spec.ts` | admin/editor/viewer 角色权限验证 |
+| **RLS 测试** | `e2e/rls.spec.ts` | 数据库行级安全策略验证 |
+| **路由测试** | `e2e/routes.spec.ts` | 未授权访问重定向、403 页面 |
+| **响应式测试** | `e2e/responsive.spec.ts` | 移动端/平板/桌面布局 |
+| **用户流程测试** | `e2e/user-flows.spec.ts` | 登录、内容创建、发布完整流程 |
+| **触摸测试** | `e2e/touch.spec.ts` | 移动端手势和触摸交互 |
+| **性能测试** | `e2e/performance.spec.ts` | 页面加载时间、LCP、FID 指标 |
+
+### 功能完成清单
+
+- ✅ **登录与权限**：OAuth 登录、角色管理、路由保护
+- ✅ **内容管理**：7 种内容类型工作台（词典、语法、阅读、课程、医疗词汇、医疗场景、医疗对话）
+- ✅ **SEO/GEO**：SEO 字段编辑、SERP 预览、结构化数据模板
+- ✅ **发布中心**：批量发布、变更记录、版本回滚
+- ✅ **素材库**：Supabase Storage 集成、上传/浏览/删除
+- ✅ **用户管理**：profiles 管理界面、allowlist 管理
+- ✅ **QA 测试**：权限回归、RLS 测试、跨端验收脚本

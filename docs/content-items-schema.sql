@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS public.content_items (
   published_at TIMESTAMPTZ NULL,
 
   -- Content type discriminator
-  type TEXT NOT NULL CHECK (type IN ('lexicon', 'grammar', 'scenarios')),
+  type TEXT NOT NULL CHECK (type IN ('lexicon', 'grammar', 'scenarios', 'medical_lexicon', 'medical_scenario')),
 
   -- Core metadata
   slug TEXT NOT NULL,                    -- URL-friendly identifier (unique per type)

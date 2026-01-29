@@ -27,8 +27,9 @@ function GoogleIcon({ className }: { className?: string }) {
 export default function AdminLoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  // Pre-fill with admin credentials from environment variable for development convenience
+  const [email, setEmail] = useState(process.env.NEXT_PUBLIC_ADMIN_EMAIL || "");
+  const [password, setPassword] = useState(process.env.NEXT_PUBLIC_ADMIN_PASSWORD || "");
   const { login, loginWithEmail, user, isLoading: authLoading } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();

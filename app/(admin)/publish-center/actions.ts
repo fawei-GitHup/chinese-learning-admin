@@ -2,6 +2,7 @@
 
 import { getSupabaseServer, isSupabaseServerConfigured } from "@/lib/supabase/server";
 import type { ContentRow, PublishingConfig } from "@/lib/publishing";
+import { validatePublishing } from "@/lib/publishing";
 
 export interface FetchResult {
   lexicon: ContentRow[];
@@ -364,4 +365,479 @@ export async function fetchRecentlyPublished(): Promise<{
       error: err instanceof Error ? err.message : "Unknown error",
     };
   }
+}
+
+// ============================================
+// BATCH OPERATIONS
+// ============================================
+
+export interface BatchOperationResult {
+  success: string[];
+  failed: Array<{ id: string; error: string }>;
+}
+
+export interface ContentItemForBatch {
+  id: string;
+  type: string;
+  title: string;
+  status: string;
+  publishing?: PublishingConfig;
+}
+
+/**
+ * Validate content items before batch publish
+ * Returns items that can be published and items that failed validation
+ */
+export async function validateBatchPublish(
+  items: ContentItemForBatch[]
+): Promise<{
+  valid: ContentItemForBatch[];
+  invalid: Array<{ item: ContentItemForBatch; errors: string[] }>;
+}> {
+  const valid: ContentItemForBatch[] = [];
+  const invalid: Array<{ item: ContentItemForBatch; errors: string[] }> = [];
+
+  for (const item of items) {
+    // Check if item is in review status
+    if (item.status !== "in_review" && item.publishing?.status !== "draft") {
+      invalid.push({
+        item,
+        errors: [`Item is not in "in_review" status (current: ${item.status || item.publishing?.status})`],
+      });
+      continue;
+    }
+
+    // Validate publishing requirements
+    if (item.publishing) {
+      const validation = validatePublishing(item.publishing);
+      if (!validation.isPublishable) {
+        invalid.push({
+          item,
+          errors: validation.errors,
+        });
+        continue;
+      }
+    }
+
+    valid.push(item);
+  }
+
+  return { valid, invalid };
+}
+
+/**
+ * Batch publish content items
+ * Only publishes items with status = 'in_review' (or draft) that pass validation
+ */
+export async function batchPublish(
+  contentIds: string[],
+  userId: string
+): Promise<BatchOperationResult> {
+  const result: BatchOperationResult = {
+    success: [],
+    failed: [],
+  };
+
+  if (!isSupabaseServerConfigured) {
+    // Mock mode - simulate success for all
+    console.log("[Mock] Batch publish:", contentIds);
+    return {
+      success: contentIds,
+      failed: [],
+    };
+  }
+
+  const supabase = getSupabaseServer();
+  if (!supabase) {
+    return {
+      success: [],
+      failed: contentIds.map((id) => ({ id, error: "Supabase client not available" })),
+    };
+  }
+
+  const now = new Date().toISOString();
+
+  // Process each content item
+  for (const contentId of contentIds) {
+    try {
+      // First, try to update content_items table (for medical_lexicon, etc.)
+      const { data: contentItem, error: fetchError } = await supabase
+        .from("content_items")
+        .select("id, status, seo_json, geo_json")
+        .eq("id", contentId)
+        .single();
+
+      if (contentItem) {
+        // Validate SEO/GEO before publishing
+        const publishing: PublishingConfig = {
+          status: contentItem.status as "draft" | "in_review" | "published" | "archived",
+          seo: {
+            title: contentItem.seo_json?.title,
+            description: contentItem.seo_json?.description,
+          },
+          geo: {
+            snippet: contentItem.geo_json?.snippet,
+            key_points: contentItem.geo_json?.keyPoints || [],
+          },
+        };
+        
+        const validation = validatePublishing(publishing);
+        if (!validation.isPublishable) {
+          result.failed.push({ id: contentId, error: validation.errors.join("; ") });
+          continue;
+        }
+
+        // Update status to published
+        const { error: updateError } = await supabase
+          .from("content_items")
+          .update({
+            status: "published",
+            published_at: now,
+            updated_at: now,
+          })
+          .eq("id", contentId);
+
+        if (updateError) {
+          result.failed.push({ id: contentId, error: updateError.message });
+        } else {
+          result.success.push(contentId);
+        }
+        continue;
+      }
+
+      // If not in content_items, try legacy tables
+      // Try medical_lexicon
+      const { data: lexiconItem } = await supabase
+        .from("medical_lexicon")
+        .select("id, publishing")
+        .eq("id", contentId)
+        .single();
+
+      if (lexiconItem) {
+        const publishing = lexiconItem.publishing as PublishingConfig;
+        const validation = validatePublishing(publishing);
+        
+        if (!validation.isPublishable) {
+          result.failed.push({ id: contentId, error: validation.errors.join("; ") });
+          continue;
+        }
+
+        const { error: updateError } = await supabase
+          .from("medical_lexicon")
+          .update({
+            publishing: {
+              ...publishing,
+              status: "published",
+              published_at: now,
+            },
+            updated_at: now,
+          })
+          .eq("id", contentId);
+
+        if (updateError) {
+          result.failed.push({ id: contentId, error: updateError.message });
+        } else {
+          result.success.push(contentId);
+        }
+        continue;
+      }
+
+      // Try medical_grammar
+      const { data: grammarItem } = await supabase
+        .from("medical_grammar")
+        .select("id, publishing")
+        .eq("id", contentId)
+        .single();
+
+      if (grammarItem) {
+        const publishing = grammarItem.publishing as PublishingConfig;
+        const validation = validatePublishing(publishing);
+        
+        if (!validation.isPublishable) {
+          result.failed.push({ id: contentId, error: validation.errors.join("; ") });
+          continue;
+        }
+
+        const { error: updateError } = await supabase
+          .from("medical_grammar")
+          .update({
+            publishing: {
+              ...publishing,
+              status: "published",
+              published_at: now,
+            },
+            updated_at: now,
+          })
+          .eq("id", contentId);
+
+        if (updateError) {
+          result.failed.push({ id: contentId, error: updateError.message });
+        } else {
+          result.success.push(contentId);
+        }
+        continue;
+      }
+
+      // Try medical_scenarios
+      const { data: scenarioItem } = await supabase
+        .from("medical_scenarios")
+        .select("id, publishing")
+        .eq("id", contentId)
+        .single();
+
+      if (scenarioItem) {
+        const publishing = scenarioItem.publishing as PublishingConfig;
+        const validation = validatePublishing(publishing);
+        
+        if (!validation.isPublishable) {
+          result.failed.push({ id: contentId, error: validation.errors.join("; ") });
+          continue;
+        }
+
+        const { error: updateError } = await supabase
+          .from("medical_scenarios")
+          .update({
+            publishing: {
+              ...publishing,
+              status: "published",
+              published_at: now,
+            },
+            updated_at: now,
+          })
+          .eq("id", contentId);
+
+        if (updateError) {
+          result.failed.push({ id: contentId, error: updateError.message });
+        } else {
+          result.success.push(contentId);
+        }
+        continue;
+      }
+
+      // Item not found in any table
+      result.failed.push({ id: contentId, error: "Content not found" });
+    } catch (err) {
+      result.failed.push({
+        id: contentId,
+        error: err instanceof Error ? err.message : "Unknown error",
+      });
+    }
+  }
+
+  // Log batch action to audit log
+  if (result.success.length > 0) {
+    try {
+      const entries = result.success.map((contentId) => ({
+        content_type: "content_item" as const,
+        content_id: contentId,
+        action: "batch_publish",
+        actor: userId,
+        previous_status: "in_review",
+        new_status: "published",
+        note: `Batch publish: ${result.success.length} items`,
+      }));
+
+      await supabase.from("content_audit_log").insert(entries);
+    } catch (auditError) {
+      console.error("[Audit] Error logging batch publish:", auditError);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Batch archive (unpublish) content items
+ * Only archives items with status = 'published'
+ */
+export async function batchArchive(
+  contentIds: string[],
+  userId: string
+): Promise<BatchOperationResult> {
+  const result: BatchOperationResult = {
+    success: [],
+    failed: [],
+  };
+
+  if (!isSupabaseServerConfigured) {
+    // Mock mode - simulate success for all
+    console.log("[Mock] Batch archive:", contentIds);
+    return {
+      success: contentIds,
+      failed: [],
+    };
+  }
+
+  const supabase = getSupabaseServer();
+  if (!supabase) {
+    return {
+      success: [],
+      failed: contentIds.map((id) => ({ id, error: "Supabase client not available" })),
+    };
+  }
+
+  const now = new Date().toISOString();
+
+  // Process each content item
+  for (const contentId of contentIds) {
+    try {
+      // First, try to update content_items table
+      const { data: contentItem } = await supabase
+        .from("content_items")
+        .select("id, status")
+        .eq("id", contentId)
+        .single();
+
+      if (contentItem) {
+        if (contentItem.status !== "published") {
+          result.failed.push({ id: contentId, error: `Item is not published (current: ${contentItem.status})` });
+          continue;
+        }
+
+        const { error: updateError } = await supabase
+          .from("content_items")
+          .update({
+            status: "archived",
+            updated_at: now,
+          })
+          .eq("id", contentId);
+
+        if (updateError) {
+          result.failed.push({ id: contentId, error: updateError.message });
+        } else {
+          result.success.push(contentId);
+        }
+        continue;
+      }
+
+      // If not in content_items, try legacy tables
+      // Try medical_lexicon
+      const { data: lexiconItem } = await supabase
+        .from("medical_lexicon")
+        .select("id, publishing")
+        .eq("id", contentId)
+        .single();
+
+      if (lexiconItem) {
+        const publishing = lexiconItem.publishing as PublishingConfig;
+        if (publishing.status !== "published") {
+          result.failed.push({ id: contentId, error: `Item is not published (current: ${publishing.status})` });
+          continue;
+        }
+
+        const { error: updateError } = await supabase
+          .from("medical_lexicon")
+          .update({
+            publishing: {
+              ...publishing,
+              status: "archived",
+            },
+            updated_at: now,
+          })
+          .eq("id", contentId);
+
+        if (updateError) {
+          result.failed.push({ id: contentId, error: updateError.message });
+        } else {
+          result.success.push(contentId);
+        }
+        continue;
+      }
+
+      // Try medical_grammar
+      const { data: grammarItem } = await supabase
+        .from("medical_grammar")
+        .select("id, publishing")
+        .eq("id", contentId)
+        .single();
+
+      if (grammarItem) {
+        const publishing = grammarItem.publishing as PublishingConfig;
+        if (publishing.status !== "published") {
+          result.failed.push({ id: contentId, error: `Item is not published (current: ${publishing.status})` });
+          continue;
+        }
+
+        const { error: updateError } = await supabase
+          .from("medical_grammar")
+          .update({
+            publishing: {
+              ...publishing,
+              status: "archived",
+            },
+            updated_at: now,
+          })
+          .eq("id", contentId);
+
+        if (updateError) {
+          result.failed.push({ id: contentId, error: updateError.message });
+        } else {
+          result.success.push(contentId);
+        }
+        continue;
+      }
+
+      // Try medical_scenarios
+      const { data: scenarioItem } = await supabase
+        .from("medical_scenarios")
+        .select("id, publishing")
+        .eq("id", contentId)
+        .single();
+
+      if (scenarioItem) {
+        const publishing = scenarioItem.publishing as PublishingConfig;
+        if (publishing.status !== "published") {
+          result.failed.push({ id: contentId, error: `Item is not published (current: ${publishing.status})` });
+          continue;
+        }
+
+        const { error: updateError } = await supabase
+          .from("medical_scenarios")
+          .update({
+            publishing: {
+              ...publishing,
+              status: "archived",
+            },
+            updated_at: now,
+          })
+          .eq("id", contentId);
+
+        if (updateError) {
+          result.failed.push({ id: contentId, error: updateError.message });
+        } else {
+          result.success.push(contentId);
+        }
+        continue;
+      }
+
+      // Item not found in any table
+      result.failed.push({ id: contentId, error: "Content not found" });
+    } catch (err) {
+      result.failed.push({
+        id: contentId,
+        error: err instanceof Error ? err.message : "Unknown error",
+      });
+    }
+  }
+
+  // Log batch action to audit log
+  if (result.success.length > 0) {
+    try {
+      const entries = result.success.map((contentId) => ({
+        content_type: "content_item" as const,
+        content_id: contentId,
+        action: "batch_archive",
+        actor: userId,
+        previous_status: "published",
+        new_status: "archived",
+        note: `Batch archive: ${result.success.length} items`,
+      }));
+
+      await supabase.from("content_audit_log").insert(entries);
+    } catch (auditError) {
+      console.error("[Audit] Error logging batch archive:", auditError);
+    }
+  }
+
+  return result;
 }

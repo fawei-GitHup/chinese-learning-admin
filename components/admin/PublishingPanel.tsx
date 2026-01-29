@@ -49,9 +49,18 @@ export function PublishingPanel({
   const [validation, setValidation] = useState<ValidationResult>({ valid: false, errors: [], warnings: [] });
   const [copied, setCopied] = useState<string | null>(null);
 
+  // 使用安全的字符串和数字值作为依赖，避免对象/数组引用问题
+  const slug = value?.slug || "";
+  const seoTitle = value?.seo?.title || "";
+  const seoDesc = value?.seo?.description || "";
+  const geoSnippet = value?.geo?.snippet || "";
+  const keyPointsCount = value?.geo?.keyPoints?.length || 0;
+
   useEffect(() => {
-    setValidation(validatePublishing(value));
-  }, [value]);
+    if (value) {
+      setValidation(validatePublishing(value));
+    }
+  }, [slug, seoTitle, seoDesc, geoSnippet, keyPointsCount]);
 
   const handleCopy = async (text: string, key: string) => {
     await navigator.clipboard.writeText(text);
@@ -259,7 +268,7 @@ export function PublishingPanel({
               </Badge>
             </Label>
             <ChipInput
-              values={value.geo?.keyPoints || []}
+              value={value.geo?.keyPoints || []}
               onChange={(keyPoints) => onChange({ ...value, geo: { ...value.geo, keyPoints } })}
               disabled={disabled}
               placeholder={t("输入要点后按回车", "Type and press Enter")}

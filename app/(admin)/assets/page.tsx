@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Upload,
   ImageIcon,
@@ -11,9 +11,14 @@ import {
   Copy,
   Link2,
   Tag,
-  X,
   Check,
   FolderOpen,
+  AlertCircle,
+  RefreshCw,
+  Download,
+  Play,
+  Pause,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -48,11 +53,23 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { getAssets, saveAsset, deleteAsset, generateId } from "@/lib/mock/storage";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { getAssets, saveAsset, deleteAsset as deleteMockAsset, generateId } from "@/lib/mock/storage";
 import type { Asset } from "@/lib/mock/data";
 import { useAuth, canEdit, canDelete } from "@/lib/auth-context";
 import { toast } from "sonner";
 import { useAdminLocale } from "@/lib/admin-locale";
+import {
+  uploadAsset,
+  listAssets,
+  deleteAsset as deleteStorageAsset,
+  isStorageAvailable,
+  validateFile,
+  formatFileSize,
+  type UploadedAsset,
+  type UploadProgress,
+  type AssetType,
+} from "@/lib/supabase/storage-service";
 
 type AssetUsage = "Lesson" | "Reading" | "Medical" | "Other";
 
@@ -61,8 +78,11 @@ interface ExtendedAsset extends Asset {
   lastUsedIn?: string;
   dimensions?: string;
   format?: string;
+  path?: string;
+  mimeType?: string;
 }
 
+// Mock 数据扩展（仅在 Mock 模式下使用）
 const mockAssetExtras: Record<string, Partial<ExtendedAsset>> = {
   a1: { usage: "Lesson", lastUsedIn: "Basic Greetings in Chinese", dimensions: "1200x630", format: "JPEG" },
   a2: { usage: "Lesson", lastUsedIn: "Basic Greetings in Chinese", format: "MP3" },
@@ -75,6 +95,8 @@ export default function AssetsPage() {
   const { user } = useAuth();
   const { locale } = useAdminLocale();
   const t = (zh: string, en: string) => (locale === "zh" ? zh : en);
+  
+  // 状态
   const [assets, setAssets] = useState<ExtendedAsset[]>([]);
   const [selectedAsset, setSelectedAsset] = useState<ExtendedAsset | null>(null);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
@@ -82,119 +104,366 @@ export default function AssetsPage() {
   const [assetToDelete, setAssetToDelete] = useState<ExtendedAsset | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [filterType, setFilterType] = useState<string>("all");
   const [filterUsage, setFilterUsage] = useState<string>("all");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [useRealStorage, setUseRealStorage] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [audioPlaying, setAudioPlaying] = useState<string | null>(null);
+  
+  // Refs
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const dropZoneRef = useRef<HTMLDivElement>(null);
 
-  // Upload form state
-  const [newAsset, setNewAsset] = useState({
-    name: "",
-    type: "image" as Asset["type"],
-    url: "",
-  });
-
+  // 检查存储可用性
   useEffect(() => {
-    loadAssets();
+    const checkStorage = async () => {
+      const available = isStorageAvailable();
+      setUseRealStorage(available);
+      if (available) {
+        console.log('[Assets] 使用 Supabase Storage');
+      } else {
+        console.log('[Assets] 使用 Mock Storage（Supabase 未配置）');
+      }
+    };
+    checkStorage();
   }, []);
 
-  const loadAssets = () => {
-    const rawAssets = getAssets();
-    const extendedAssets: ExtendedAsset[] = rawAssets.map((a) => ({
-      ...a,
-      ...mockAssetExtras[a.id],
-    }));
-    setAssets(extendedAssets);
+  // 加载资源
+  useEffect(() => {
+    loadAssets();
+  }, [useRealStorage]);
+
+  const loadAssets = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      if (useRealStorage) {
+        // 使用真实 Storage
+        const realAssets = await listAssets();
+        const extendedAssets: ExtendedAsset[] = realAssets.map((a) => ({
+          id: a.id,
+          name: a.name,
+          type: a.type as ExtendedAsset["type"],
+          url: a.url,
+          size: a.size,
+          uploadedAt: a.uploadedAt,
+          uploadedBy: a.uploadedBy,
+          path: a.path,
+          mimeType: a.mimeType,
+          format: getFormatFromMimeType(a.mimeType),
+        }));
+        setAssets(extendedAssets);
+      } else {
+        // 使用 Mock 数据
+        const rawAssets = getAssets();
+        const extendedAssets: ExtendedAsset[] = rawAssets.map((a) => ({
+          ...a,
+          ...mockAssetExtras[a.id],
+        }));
+        setAssets(extendedAssets);
+      }
+    } catch (error) {
+      console.error('[Assets] 加载资源失败:', error);
+      toast.error(t("加载失败", "Load failed"), {
+        description: t("无法加载资源列表，请稍后重试", "Unable to load assets, please try again later"),
+      });
+      // 回退到 Mock 数据
+      const rawAssets = getAssets();
+      const extendedAssets: ExtendedAsset[] = rawAssets.map((a) => ({
+        ...a,
+        ...mockAssetExtras[a.id],
+      }));
+      setAssets(extendedAssets);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [useRealStorage, t]);
+
+  // 从 MIME 类型获取格式
+  const getFormatFromMimeType = (mimeType: string): string => {
+    const formatMap: Record<string, string> = {
+      'image/jpeg': 'JPEG',
+      'image/png': 'PNG',
+      'image/gif': 'GIF',
+      'image/webp': 'WebP',
+      'image/svg+xml': 'SVG',
+      'audio/mpeg': 'MP3',
+      'audio/wav': 'WAV',
+      'audio/ogg': 'OGG',
+      'audio/aac': 'AAC',
+      'application/pdf': 'PDF',
+      'application/msword': 'DOC',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'DOCX',
+    };
+    return formatMap[mimeType] || mimeType.split('/')[1]?.toUpperCase() || 'Unknown';
   };
 
+  // 过滤资源
   const filteredAssets = assets.filter((a) => {
     if (filterType !== "all" && a.type !== filterType) return false;
     if (filterUsage !== "all" && a.usage !== filterUsage) return false;
     return true;
   });
 
+  // 处理文件选择
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      const fileArray = Array.from(files);
+      // 验证文件
+      const validFiles: File[] = [];
+      for (const file of fileArray) {
+        const validation = validateFile(file);
+        if (validation.valid) {
+          validFiles.push(file);
+        } else {
+          toast.error(t("文件验证失败", "File validation failed"), {
+            description: `${file.name}: ${validation.error}`,
+          });
+        }
+      }
+      setSelectedFiles(validFiles);
+    }
+  };
+
+  // 拖拽处理
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // 检查是否真的离开了放置区域
+    if (dropZoneRef.current && !dropZoneRef.current.contains(e.relatedTarget as Node)) {
+      setIsDragging(false);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      const fileArray = Array.from(files);
+      const validFiles: File[] = [];
+      for (const file of fileArray) {
+        const validation = validateFile(file);
+        if (validation.valid) {
+          validFiles.push(file);
+        } else {
+          toast.error(t("文件验证失败", "File validation failed"), {
+            description: `${file.name}: ${validation.error}`,
+          });
+        }
+      }
+      setSelectedFiles(validFiles);
+    }
+  };
+
+  // 移除选中的文件
+  const removeSelectedFile = (index: number) => {
+    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // 处理上传
   const handleUpload = async () => {
-    if (!newAsset.name) {
-      toast.error(t("验证错误", "Validation error"), { description: t("文件名是必需的。", "File name is required.") });
+    if (selectedFiles.length === 0) {
+      toast.error(t("验证错误", "Validation error"), {
+        description: t("请选择要上传的文件", "Please select files to upload"),
+      });
       return;
     }
 
     setIsUploading(true);
     setUploadProgress(0);
 
-    // Simulate upload progress
-    const progressInterval = setInterval(() => {
-      setUploadProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(progressInterval);
-          return 100;
+    const totalFiles = selectedFiles.length;
+    let uploadedCount = 0;
+    let failedCount = 0;
+
+    for (const file of selectedFiles) {
+      try {
+        if (useRealStorage) {
+          // 使用真实 Storage 上传
+          await uploadAsset(file, {
+            onProgress: (progress: UploadProgress) => {
+              const baseProgress = (uploadedCount / totalFiles) * 100;
+              const fileProgress = (progress.percentage / totalFiles);
+              setUploadProgress(Math.round(baseProgress + fileProgress));
+            },
+          });
+        } else {
+          // 模拟上传
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          
+          // 保存到 Mock storage
+          const now = new Date().toISOString();
+          const assetType: Asset["type"] = file.type.startsWith('image/') 
+            ? 'image' 
+            : file.type.startsWith('audio/') 
+              ? 'audio' 
+              : 'document';
+          
+          const assetToSave: Asset = {
+            id: generateId(),
+            name: file.name,
+            type: assetType,
+            url: URL.createObjectURL(file), // 本地预览 URL
+            size: file.size,
+            uploadedAt: now,
+            uploadedBy: user?.name || "Unknown",
+          };
+          saveAsset(assetToSave);
         }
-        return prev + 10;
-      });
-    }, 150);
+        
+        uploadedCount++;
+        setUploadProgress(Math.round((uploadedCount / totalFiles) * 100));
+      } catch (error) {
+        console.error(`[Assets] 上传失败: ${file.name}`, error);
+        failedCount++;
+        toast.error(t("上传失败", "Upload failed"), {
+          description: `${file.name}: ${error instanceof Error ? error.message : t("未知错误", "Unknown error")}`,
+        });
+      }
+    }
 
-    await new Promise((resolve) => setTimeout(resolve, 1600));
-    clearInterval(progressInterval);
-    setUploadProgress(100);
-
-    const now = new Date().toISOString();
-    const assetToSave: Asset = {
-      id: generateId(),
-      name: newAsset.name,
-      type: newAsset.type,
-      url: newAsset.url || `/assets/${newAsset.name}`,
-      size: Math.floor(Math.random() * 5000000) + 100000,
-      uploadedAt: now,
-      uploadedBy: user?.name || "Unknown",
-    };
-
-    saveAsset(assetToSave);
-    loadAssets();
-    setIsUploadDialogOpen(false);
+    // 上传完成
     setIsUploading(false);
+    setUploadProgress(100);
+    
+    if (uploadedCount > 0) {
+      toast.success(
+        t("上传完成", "Upload complete"),
+        { description: t(`成功上传 ${uploadedCount} 个文件`, `Successfully uploaded ${uploadedCount} file(s)`) }
+      );
+    }
+    
+    if (failedCount > 0) {
+      toast.warning(
+        t("部分上传失败", "Some uploads failed"),
+        { description: t(`${failedCount} 个文件上传失败`, `${failedCount} file(s) failed to upload`) }
+      );
+    }
+
+    // 重置状态
+    setSelectedFiles([]);
+    setIsUploadDialogOpen(false);
     setUploadProgress(0);
-    setNewAsset({ name: "", type: "image", url: "" });
-    toast.success(t("资源已上传", "Asset uploaded"), { description: t(`"${assetToSave.name}" 已添加。`, `"${assetToSave.name}" has been added.`) });
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    
+    // 刷新资源列表
+    loadAssets();
   };
 
+  // 复制链接
   const handleCopyLink = (asset: ExtendedAsset) => {
-    navigator.clipboard.writeText(`https://example.com${asset.url}`);
+    const url = asset.url.startsWith('http') ? asset.url : `${window.location.origin}${asset.url}`;
+    navigator.clipboard.writeText(url);
     setCopiedId(asset.id);
     setTimeout(() => setCopiedId(null), 2000);
-    toast.success(t("链接已复制", "Link copied"), { description: t("资源 URL 已复制到剪贴板。", "Asset URL copied to clipboard.") });
+    toast.success(t("链接已复制", "Link copied"), {
+      description: t("资源 URL 已复制到剪贴板", "Asset URL copied to clipboard"),
+    });
   };
 
+  // 设置用途
   const handleSetUsage = (asset: ExtendedAsset, usage: AssetUsage) => {
-    // In a real app, this would save to the backend
     const updated = assets.map((a) => (a.id === asset.id ? { ...a, usage } : a));
     setAssets(updated);
     if (selectedAsset?.id === asset.id) {
       setSelectedAsset({ ...selectedAsset, usage });
     }
-    toast.success(t("用途已更新", "Usage updated"), { description: t(`资源已标记为 ${usage}。`, `Asset marked as ${usage}.`) });
+    toast.success(t("用途已更新", "Usage updated"), {
+      description: t(`资源已标记为 ${usage}`, `Asset marked as ${usage}`),
+    });
   };
 
+  // 删除确认
   const handleDelete = (asset: ExtendedAsset) => {
     if (!user || !canDelete(user.role)) {
-      toast.error(t("权限被拒绝", "Permission denied"), { description: t("只有管理员可以删除资源。", "Only admins can delete assets.") });
+      toast.error(t("权限被拒绝", "Permission denied"), {
+        description: t("只有管理员可以删除资源", "Only admins can delete assets"),
+      });
       return;
     }
     setAssetToDelete(asset);
     setIsDeleteDialogOpen(true);
   };
 
-  const confirmDelete = () => {
-    if (assetToDelete) {
-      deleteAsset(assetToDelete.id);
-      loadAssets();
+  // 执行删除
+  const confirmDelete = async () => {
+    if (!assetToDelete) return;
+
+    try {
+      if (useRealStorage && assetToDelete.path) {
+        // 删除真实 Storage 中的文件
+        await deleteStorageAsset(assetToDelete.path);
+      } else {
+        // 删除 Mock storage 中的记录
+        deleteMockAsset(assetToDelete.id);
+      }
+
+      // 更新本地状态
+      setAssets((prev) => prev.filter((a) => a.id !== assetToDelete.id));
       if (selectedAsset?.id === assetToDelete.id) {
         setSelectedAsset(null);
       }
-      toast.success(t("资源已删除", "Asset deleted"), { description: t(`"${assetToDelete.name}" 已被删除。`, `"${assetToDelete.name}" has been deleted.`) });
+
+      toast.success(t("资源已删除", "Asset deleted"), {
+        description: t(`"${assetToDelete.name}" 已被删除`, `"${assetToDelete.name}" has been deleted`),
+      });
+    } catch (error) {
+      console.error('[Assets] 删除失败:', error);
+      toast.error(t("删除失败", "Delete failed"), {
+        description: error instanceof Error ? error.message : t("未知错误", "Unknown error"),
+      });
     }
+
     setIsDeleteDialogOpen(false);
     setAssetToDelete(null);
   };
 
+  // 下载资源
+  const handleDownload = (asset: ExtendedAsset) => {
+    const link = document.createElement('a');
+    link.href = asset.url;
+    link.download = asset.name;
+    link.target = '_blank';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // 播放/暂停音频
+  const toggleAudioPlay = (asset: ExtendedAsset) => {
+    if (audioPlaying === asset.id) {
+      audioRef.current?.pause();
+      setAudioPlaying(null);
+    } else {
+      if (audioRef.current) {
+        audioRef.current.src = asset.url;
+        audioRef.current.play();
+        setAudioPlaying(asset.id);
+      }
+    }
+  };
+
+  // 获取类型图标
   const getTypeIcon = (type: Asset["type"], className = "h-8 w-8") => {
     switch (type) {
       case "image":
@@ -208,14 +477,12 @@ export default function AssetsPage() {
     }
   };
 
+  // 格式化字节
   const formatBytes = (bytes: number) => {
-    if (bytes === 0) return "0 Bytes";
-    const k = 1024;
-    const sizes = ["Bytes", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${Number.parseFloat((bytes / k ** i).toFixed(2))} ${sizes[i]}`;
+    return formatFileSize(bytes);
   };
 
+  // 获取用途徽章颜色
   const getUsageBadgeColor = (usage?: AssetUsage) => {
     switch (usage) {
       case "Lesson":
@@ -229,7 +496,7 @@ export default function AssetsPage() {
     }
   };
 
-  // Calculate stats
+  // 计算统计数据
   const totalSize = assets.reduce((acc, a) => acc + a.size, 0);
   const imageCount = assets.filter((a) => a.type === "image").length;
   const audioCount = assets.filter((a) => a.type === "audio").length;
@@ -237,25 +504,51 @@ export default function AssetsPage() {
 
   return (
     <div className="flex h-[calc(100vh-8rem)] gap-6">
-      {/* Main Content - Asset Grid */}
+      {/* 隐藏的音频元素 */}
+      <audio
+        ref={audioRef}
+        onEnded={() => setAudioPlaying(null)}
+        className="hidden"
+      />
+
+      {/* 主内容 - 资源网格 */}
       <div className="flex-1 flex flex-col">
-        {/* Header */}
+        {/* 标题栏 */}
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold text-foreground">{t("资源", "Assets")}</h1>
-            <p className="text-muted-foreground">{t("管理媒体文件和文档", "Manage media files and documents")}</p>
+            <p className="text-muted-foreground">
+              {t("管理媒体文件和文档", "Manage media files and documents")}
+              {!useRealStorage && (
+                <Badge variant="outline" className="ml-2 text-xs">
+                  {t("Mock 模式", "Mock Mode")}
+                </Badge>
+              )}
+            </p>
           </div>
-          <Button
-            onClick={() => setIsUploadDialogOpen(true)}
-            className="rounded-xl bg-primary hover:bg-primary/90"
-            disabled={!user || !canEdit(user.role)}
-          >
-            <Upload className="mr-2 h-4 w-4" />
-            {t("上传资源", "Upload Asset")}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={loadAssets}
+              disabled={isLoading}
+              className="rounded-xl"
+            >
+              <RefreshCw className={`mr-2 h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+              {t("刷新", "Refresh")}
+            </Button>
+            <Button
+              onClick={() => setIsUploadDialogOpen(true)}
+              className="rounded-xl bg-primary hover:bg-primary/90"
+              disabled={!user || !canEdit(user.role)}
+            >
+              <Upload className="mr-2 h-4 w-4" />
+              {t("上传资源", "Upload Asset")}
+            </Button>
+          </div>
         </div>
 
-        {/* Stats */}
+        {/* 统计卡片 */}
         <div className="grid gap-4 md:grid-cols-4 mb-6">
           <Card className="glass-card border-border/50 rounded-2xl">
             <CardContent className="pt-4 pb-4">
@@ -292,7 +585,7 @@ export default function AssetsPage() {
           </Card>
         </div>
 
-        {/* Filters */}
+        {/* 过滤器 */}
         <div className="flex gap-3 mb-4">
           <Select value={filterType} onValueChange={setFilterType}>
             <SelectTrigger className="w-[150px] bg-secondary/50 border-border/50 rounded-xl">
@@ -319,44 +612,110 @@ export default function AssetsPage() {
           </Select>
         </div>
 
-        {/* Asset Grid */}
+        {/* 资源网格 */}
         <ScrollArea className="flex-1">
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 pr-4">
-            {filteredAssets.map((asset) => (
-              <Card
-                key={asset.id}
-                className={`glass-card border-border/50 rounded-2xl cursor-pointer transition-all hover:border-primary/50 ${selectedAsset?.id === asset.id ? "border-primary ring-2 ring-primary/20" : ""}`}
-                onClick={() => setSelectedAsset(asset)}
+          {isLoading ? (
+            <div className="flex items-center justify-center h-64">
+              <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : filteredAssets.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-64 text-center">
+              <FolderOpen className="h-16 w-16 text-muted-foreground mb-4" />
+              <p className="text-muted-foreground">
+                {t("没有找到资源", "No assets found")}
+              </p>
+              <Button
+                variant="outline"
+                className="mt-4 rounded-xl"
+                onClick={() => setIsUploadDialogOpen(true)}
+                disabled={!user || !canEdit(user.role)}
               >
-                <CardContent className="p-4">
-                  {/* Preview */}
-                  <div className="aspect-square rounded-xl bg-secondary/30 flex items-center justify-center mb-3 overflow-hidden">
-                    {asset.type === "image" ? (
-                      <div className="w-full h-full bg-gradient-to-br from-accent/20 to-primary/20 flex items-center justify-center">
+                <Upload className="mr-2 h-4 w-4" />
+                {t("上传第一个资源", "Upload your first asset")}
+              </Button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 pr-4">
+              {filteredAssets.map((asset) => (
+                <Card
+                  key={asset.id}
+                  className={`glass-card border-border/50 rounded-2xl cursor-pointer transition-all hover:border-primary/50 ${
+                    selectedAsset?.id === asset.id ? "border-primary ring-2 ring-primary/20" : ""
+                  }`}
+                  onClick={() => setSelectedAsset(asset)}
+                >
+                  <CardContent className="p-4">
+                    {/* 预览 */}
+                    <div className="aspect-square rounded-xl bg-secondary/30 flex items-center justify-center mb-3 overflow-hidden relative">
+                      {asset.type === "image" ? (
+                        useRealStorage ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={asset.url}
+                            alt={asset.name}
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                              e.currentTarget.nextElementSibling?.classList.remove('hidden');
+                            }}
+                          />
+                        ) : (
+                          <div className="w-full h-full bg-gradient-to-br from-accent/20 to-primary/20 flex items-center justify-center">
+                            <ImageIcon className="h-12 w-12 text-accent/50" />
+                          </div>
+                        )
+                      ) : asset.type === "audio" ? (
+                        <div className="w-full h-full bg-gradient-to-br from-chart-3/20 to-chart-3/5 flex items-center justify-center">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-12 w-12 rounded-full bg-chart-3/20 hover:bg-chart-3/30"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleAudioPlay(asset);
+                            }}
+                          >
+                            {audioPlaying === asset.id ? (
+                              <Pause className="h-6 w-6 text-chart-3" />
+                            ) : (
+                              <Play className="h-6 w-6 text-chart-3" />
+                            )}
+                          </Button>
+                        </div>
+                      ) : (
+                        getTypeIcon(asset.type, "h-12 w-12")
+                      )}
+                      {/* 图片加载失败的备用显示 */}
+                      <div className="hidden w-full h-full bg-gradient-to-br from-accent/20 to-primary/20 flex items-center justify-center absolute inset-0">
                         <ImageIcon className="h-12 w-12 text-accent/50" />
                       </div>
-                    ) : (
-                      getTypeIcon(asset.type, "h-12 w-12")
-                    )}
-                  </div>
+                    </div>
 
-                  {/* Info */}
-                  <div className="space-y-2">
-                    <p className="font-medium text-sm truncate" title={asset.name}>
-                      {asset.name}
-                    </p>
-                    <div className="flex items-center justify-between">
+                    {/* 信息 */}
+                    <div className="space-y-2">
+                      <p className="font-medium text-sm truncate" title={asset.name}>
+                        {asset.name}
+                      </p>
+                      <div className="flex items-center justify-between">
                         <Badge variant="outline" className={`text-xs ${getUsageBadgeColor(asset.usage)}`}>
-                          {asset.usage ? t(
-                            asset.usage === "Lesson" ? "课程" : asset.usage === "Reading" ? "阅读" : asset.usage === "Medical" ? "医学" : "其他",
-                            asset.usage
-                          ) : t("未标记", "Untagged")}
+                          {asset.usage
+                            ? t(
+                                asset.usage === "Lesson"
+                                  ? "课程"
+                                  : asset.usage === "Reading"
+                                  ? "阅读"
+                                  : asset.usage === "Medical"
+                                  ? "医学"
+                                  : "其他",
+                                asset.usage
+                              )
+                            : t("未标记", "Untagged")}
                         </Badge>
                         <span className="text-xs text-muted-foreground">{formatBytes(asset.size)}</span>
                       </div>
                     </div>
-  
-                    {/* Actions */}
+
+                    {/* 操作 */}
                     <div className="flex items-center justify-between mt-3 pt-3 border-t border-border/30">
                       <Button
                         variant="ghost"
@@ -383,6 +742,10 @@ export default function AssetsPage() {
                           <DropdownMenuItem onClick={() => handleCopyLink(asset)}>
                             <Copy className="mr-2 h-4 w-4" />
                             {t("复制链接", "Copy Link")}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleDownload(asset)}>
+                            <Download className="mr-2 h-4 w-4" />
+                            {t("下载", "Download")}
                           </DropdownMenuItem>
                           <DropdownMenuSub>
                             <DropdownMenuSubTrigger>
@@ -420,10 +783,11 @@ export default function AssetsPage() {
                 </Card>
               ))}
             </div>
-          </ScrollArea>
-        </div>
+          )}
+        </ScrollArea>
+      </div>
 
-      {/* Right Panel - Asset Details */}
+      {/* 右侧面板 - 资源详情 */}
       <Card className="w-80 glass-card border-border/50 rounded-2xl flex-shrink-0">
         <CardHeader className="pb-2">
           <CardTitle className="text-lg">{t("资源详情", "Asset Details")}</CardTitle>
@@ -431,18 +795,48 @@ export default function AssetsPage() {
         <CardContent>
           {selectedAsset ? (
             <div className="space-y-4">
-              {/* Preview */}
+              {/* 预览 */}
               <div className="aspect-video rounded-xl bg-secondary/30 flex items-center justify-center overflow-hidden">
                 {selectedAsset.type === "image" ? (
-                  <div className="w-full h-full bg-gradient-to-br from-accent/20 to-primary/20 flex items-center justify-center">
-                    <ImageIcon className="h-16 w-16 text-accent/50" />
+                  useRealStorage ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={selectedAsset.url}
+                      alt={selectedAsset.name}
+                      className="w-full h-full object-contain"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                      }}
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-gradient-to-br from-accent/20 to-primary/20 flex items-center justify-center">
+                      <ImageIcon className="h-16 w-16 text-accent/50" />
+                    </div>
+                  )
+                ) : selectedAsset.type === "audio" ? (
+                  <div className="w-full h-full bg-gradient-to-br from-chart-3/20 to-chart-3/5 flex flex-col items-center justify-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-16 w-16 rounded-full bg-chart-3/20 hover:bg-chart-3/30"
+                      onClick={() => toggleAudioPlay(selectedAsset)}
+                    >
+                      {audioPlaying === selectedAsset.id ? (
+                        <Pause className="h-8 w-8 text-chart-3" />
+                      ) : (
+                        <Play className="h-8 w-8 text-chart-3" />
+                      )}
+                    </Button>
+                    {audioPlaying === selectedAsset.id && (
+                      <p className="text-xs text-chart-3">{t("播放中...", "Playing...")}</p>
+                    )}
                   </div>
                 ) : (
                   getTypeIcon(selectedAsset.type, "h-16 w-16")
                 )}
               </div>
 
-              {/* Name */}
+              {/* 名称 */}
               <div>
                 <p className="text-sm text-muted-foreground">{t("文件名", "File Name")}</p>
                 <p className="font-medium break-all">{selectedAsset.name}</p>
@@ -450,14 +844,20 @@ export default function AssetsPage() {
 
               <Separator className="bg-border/30" />
 
-              {/* Details Grid */}
+              {/* 详情网格 */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-xs text-muted-foreground">{t("类型", "Type")}</p>
-                  <p className="text-sm font-medium capitalize">{t(
-                    selectedAsset.type === "image" ? "图片" : selectedAsset.type === "audio" ? "音频" : "文档",
-                    selectedAsset.type
-                  )}</p>
+                  <p className="text-sm font-medium capitalize">
+                    {t(
+                      selectedAsset.type === "image"
+                        ? "图片"
+                        : selectedAsset.type === "audio"
+                        ? "音频"
+                        : "文档",
+                      selectedAsset.type
+                    )}
+                  </p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">{t("大小", "Size")}</p>
@@ -479,18 +879,26 @@ export default function AssetsPage() {
 
               <Separator className="bg-border/30" />
 
-              {/* Usage */}
+              {/* 用途 */}
               <div>
                 <p className="text-xs text-muted-foreground mb-2">{t("用途", "Usage")}</p>
                 <Badge variant="outline" className={getUsageBadgeColor(selectedAsset.usage)}>
-                  {selectedAsset.usage ? t(
-                    selectedAsset.usage === "Lesson" ? "课程" : selectedAsset.usage === "Reading" ? "阅读" : selectedAsset.usage === "Medical" ? "医学" : "其他",
-                    selectedAsset.usage
-                  ) : t("未标记", "Untagged")}
+                  {selectedAsset.usage
+                    ? t(
+                        selectedAsset.usage === "Lesson"
+                          ? "课程"
+                          : selectedAsset.usage === "Reading"
+                          ? "阅读"
+                          : selectedAsset.usage === "Medical"
+                          ? "医学"
+                          : "其他",
+                        selectedAsset.usage
+                      )
+                    : t("未标记", "Untagged")}
                 </Badge>
               </div>
 
-              {/* Last Used In */}
+              {/* 最后使用位置 */}
               {selectedAsset.lastUsedIn && (
                 <div>
                   <p className="text-xs text-muted-foreground mb-1">{t("最后使用于", "Last Used In")}</p>
@@ -503,7 +911,7 @@ export default function AssetsPage() {
 
               <Separator className="bg-border/30" />
 
-              {/* Metadata */}
+              {/* 元数据 */}
               <div className="space-y-2">
                 <div>
                   <p className="text-xs text-muted-foreground">{t("上传者", "Uploaded By")}</p>
@@ -523,7 +931,7 @@ export default function AssetsPage() {
                 </div>
               </div>
 
-              {/* Actions */}
+              {/* 操作按钮 */}
               <div className="pt-2 space-y-2">
                 <Button
                   variant="outline"
@@ -532,6 +940,14 @@ export default function AssetsPage() {
                 >
                   <Copy className="mr-2 h-4 w-4" />
                   {t("复制链接", "Copy Link")}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full rounded-xl bg-transparent"
+                  onClick={() => handleDownload(selectedAsset)}
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  {t("下载", "Download")}
                 </Button>
                 <Button
                   variant="destructive"
@@ -555,28 +971,94 @@ export default function AssetsPage() {
         </CardContent>
       </Card>
 
-      {/* Upload Dialog */}
+      {/* 上传对话框 */}
       <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
-        <DialogContent className="glass-card border-border/50 rounded-2xl max-w-md">
+        <DialogContent className="glass-card border-border/50 rounded-2xl max-w-lg">
           <DialogHeader>
             <DialogTitle className="text-foreground">{t("上传资源", "Upload Asset")}</DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              {t("添加新文件到您的资源库。（模拟上传）", "Add a new file to your asset library. (Mock upload)")}
+              {useRealStorage
+                ? t("选择或拖放文件到此处上传到 Supabase Storage", "Select or drag files to upload to Supabase Storage")
+                : t("选择或拖放文件到此处（当前为模拟上传模式）", "Select or drag files here (Mock upload mode)")}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            {/* Drop Zone */}
-            <div className="border-2 border-dashed border-border/50 rounded-xl p-8 text-center hover:border-primary/50 transition-colors">
-              <Upload className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
+            {/* 拖放区域 */}
+            <div
+              ref={dropZoneRef}
+              className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
+                isDragging
+                  ? "border-primary bg-primary/10"
+                  : "border-border/50 hover:border-primary/50"
+              }`}
+              onDragEnter={handleDragEnter}
+              onDragLeave={handleDragLeave}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/*,audio/*,.pdf,.doc,.docx"
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+              <Upload className={`h-10 w-10 mx-auto mb-3 ${isDragging ? "text-primary" : "text-muted-foreground"}`} />
               <p className="text-sm text-muted-foreground">
-                {t("拖放文件到此处，或点击浏览", "Drag and drop your file here, or click to browse")}
+                {isDragging
+                  ? t("松开以添加文件", "Release to add files")
+                  : t("拖放文件到此处，或点击浏览", "Drag and drop files here, or click to browse")}
               </p>
               <p className="text-xs text-muted-foreground mt-1">
-                {t("支持：JPG, PNG, MP3, WAV, PDF, DOC", "Supports: JPG, PNG, MP3, WAV, PDF, DOC")}
+                {t("支持：JPG, PNG, GIF, WebP, MP3, WAV, OGG, PDF, DOC", "Supports: JPG, PNG, GIF, WebP, MP3, WAV, OGG, PDF, DOC")}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {t("最大文件大小: 50MB", "Max file size: 50MB")}
               </p>
             </div>
 
-            {/* Progress Bar (shown during upload) */}
+            {/* 已选文件列表 */}
+            {selectedFiles.length > 0 && (
+              <div className="space-y-2">
+                <Label>{t("已选文件", "Selected Files")} ({selectedFiles.length})</Label>
+                <ScrollArea className="max-h-40">
+                  <div className="space-y-2">
+                    {selectedFiles.map((file, index) => (
+                      <div
+                        key={index}
+                        className="flex items-center justify-between p-2 rounded-lg bg-secondary/30"
+                      >
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          {file.type.startsWith("image/") ? (
+                            <ImageIcon className="h-4 w-4 text-accent flex-shrink-0" />
+                          ) : file.type.startsWith("audio/") ? (
+                            <FileAudio className="h-4 w-4 text-chart-3 flex-shrink-0" />
+                          ) : (
+                            <FileText className="h-4 w-4 text-primary flex-shrink-0" />
+                          )}
+                          <span className="text-sm truncate">{file.name}</span>
+                          <span className="text-xs text-muted-foreground flex-shrink-0">
+                            ({formatFileSize(file.size)})
+                          </span>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0"
+                          onClick={() => removeSelectedFile(index)}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+            )}
+
+            {/* 进度条 */}
             {isUploading && (
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-sm">
@@ -587,47 +1069,26 @@ export default function AssetsPage() {
               </div>
             )}
 
-            <div className="space-y-2">
-              <Label htmlFor="name">{t("文件名", "File Name")}</Label>
-              <Input
-                id="name"
-                value={newAsset.name}
-                onChange={(e) => setNewAsset((prev) => ({ ...prev, name: e.target.value }))}
-                className="bg-secondary/50 border-border/50 rounded-xl"
-                placeholder={t("例如：lesson-banner.jpg", "e.g., lesson-banner.jpg")}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="type">{t("文件类型", "File Type")}</Label>
-              <Select
-                value={newAsset.type}
-                onValueChange={(value) => setNewAsset((prev) => ({ ...prev, type: value as Asset["type"] }))}
-              >
-                <SelectTrigger className="bg-secondary/50 border-border/50 rounded-xl">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="glass-card border-border/50 rounded-xl">
-                  <SelectItem value="image">{t("图片", "Image")}</SelectItem>
-                  <SelectItem value="audio">{t("音频", "Audio")}</SelectItem>
-                  <SelectItem value="document">{t("文档", "Document")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="url">{t("URL 路径（可选）", "URL Path (optional)")}</Label>
-              <Input
-                id="url"
-                value={newAsset.url}
-                onChange={(e) => setNewAsset((prev) => ({ ...prev, url: e.target.value }))}
-                className="bg-secondary/50 border-border/50 rounded-xl"
-                placeholder="/assets/filename.ext"
-              />
-            </div>
+            {/* 存储模式提示 */}
+            {!useRealStorage && (
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  {t(
+                    "当前为 Mock 模式。配置 Supabase 环境变量后将使用真实存储。",
+                    "Currently in Mock mode. Configure Supabase environment variables to use real storage."
+                  )}
+                </AlertDescription>
+              </Alert>
+            )}
           </div>
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() => setIsUploadDialogOpen(false)}
+              onClick={() => {
+                setIsUploadDialogOpen(false);
+                setSelectedFiles([]);
+              }}
               className="rounded-xl"
               disabled={isUploading}
             >
@@ -636,15 +1097,17 @@ export default function AssetsPage() {
             <Button
               onClick={handleUpload}
               className="rounded-xl bg-primary hover:bg-primary/90"
-              disabled={isUploading}
+              disabled={isUploading || selectedFiles.length === 0}
             >
-              {isUploading ? t("上传中...", "Uploading...") : t("上传", "Upload")}
+              {isUploading
+                ? t("上传中...", "Uploading...")
+                : t(`上传 ${selectedFiles.length > 0 ? `(${selectedFiles.length})` : ""}`, `Upload ${selectedFiles.length > 0 ? `(${selectedFiles.length})` : ""}`)}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Delete Dialog */}
+      {/* 删除确认对话框 */}
       <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
         <DialogContent className="glass-card border-border/50 rounded-2xl max-w-md">
           <DialogHeader>

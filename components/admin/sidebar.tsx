@@ -17,6 +17,7 @@ import {
   Theater,
   Rocket,
   HeartPulse,
+  Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -46,6 +47,7 @@ export function AdminSidebar() {
     { title: t("医学词典", "Medical Lexicon"), href: "/content/lexicon", icon: BookMarked },
     { title: t("医疗词汇", "Medical Lexicon WB"), href: "/content/medical-lexicon", icon: HeartPulse },
     { title: t("医学情景", "Scenarios"), href: "/content/scenarios", icon: Theater },
+    { title: t("医疗场景", "Medical Scenarios"), href: "/content/medical-scenario", icon: Theater },
   ];
 
   const mainItems = [
@@ -57,6 +59,7 @@ export function AdminSidebar() {
     { title: t("SEO 工具", "SEO Tools"), href: "/seo", icon: Search, roles: ["admin", "editor"] },
     { title: t("SEO / GEO", "SEO / GEO"), href: "/seo-geo", icon: Globe, roles: ["admin", "editor"] },
     { title: t("发布中心", "Publish Center"), href: "/publish-center", icon: Rocket, roles: ["admin"] },
+    { title: t("用户管理", "User Management"), href: "/users", icon: Users, roles: ["admin"] },
     { title: t("设置", "Settings"), href: "/settings", icon: Settings, roles: ["admin"] },
   ];
 

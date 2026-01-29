@@ -72,7 +72,8 @@ import {
   type LexiconEntry,
 } from "@/lib/admin-mock";
 
-const generateId = () => `lex_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+// Generate a standard UUID v4 format compatible with Supabase UUID column
+const generateId = () => crypto.randomUUID();
 
 // Unified entry type for UI
 interface LexiconUIEntry {
@@ -115,7 +116,7 @@ function supabaseToUI(entry: SupabaseLexicon): LexiconUIEntry {
     id: entry.id,
     term: entry.term,
     pinyin: entry.pinyin,
-    definition: entry.definition,
+    definition: entry.definition || "",
     say_it_like: entry.usage?.say_it_like || [],
     dont_say: entry.usage?.dont_say || [],
     collocations: entry.usage?.collocations || [],
@@ -155,6 +156,10 @@ function uiToSupabase(entry: LexiconUIEntry): Partial<SupabaseLexicon> {
     id: entry.id,
     term: entry.term,
     pinyin: entry.pinyin,
+    // Required fields from database schema - provide defaults
+    english: entry.definition?.substring(0, 100) || entry.term, // Use definition as fallback for english
+    category: "general", // Default category
+    difficulty: "beginner", // Default difficulty
     definition: entry.definition,
     usage: {
       say_it_like: entry.say_it_like,
@@ -215,7 +220,7 @@ export default function LexiconPage() {
       }
     } catch (error) {
       console.error("Error fetching data:", error);
-      toast.error("加载数据失败", "Failed to load data");
+      toast.error(t("加载数据失败", "Failed to load data"));
     } finally {
       setIsLoading(false);
     }
@@ -525,8 +530,8 @@ export default function LexiconPage() {
 
       {/* Editor Drawer */}
       <Sheet open={isDrawerOpen} onOpenChange={setIsDrawerOpen}>
-        <SheetContent className="glass-card border-border/50 w-full sm:max-w-2xl overflow-y-auto">
-          <SheetHeader>
+        <SheetContent className="glass-card border-border/50 w-full sm:max-w-2xl flex flex-col h-full">
+          <SheetHeader className="shrink-0">
             <SheetTitle>
               {isViewMode
                 ? t("查看词条", "View Entry")
@@ -539,7 +544,8 @@ export default function LexiconPage() {
             </SheetDescription>
           </SheetHeader>
 
-          <Tabs defaultValue="content" className="mt-6">
+          <div className="flex-1 overflow-y-auto mt-6">
+          <Tabs defaultValue="content" className="">
             <TabsList className="grid w-full grid-cols-2 rounded-xl bg-secondary/50">
               <TabsTrigger value="content" className="rounded-lg">
                 {t("内容", "Content")}
@@ -595,8 +601,8 @@ export default function LexiconPage() {
                 <div className="space-y-2">
                   <Label>{t("正确说法", "Say It Like")}</Label>
                   <ChipInput
-                    values={editEntry.say_it_like}
-                    onChange={(values) => setEditEntry({ ...editEntry, say_it_like: values })}
+                    value={editEntry.say_it_like}
+                    onChange={(value) => setEditEntry({ ...editEntry, say_it_like: value })}
                     disabled={isViewMode}
                     placeholder={t("输入示例后按回车", "Type and press Enter")}
                   />
@@ -604,8 +610,8 @@ export default function LexiconPage() {
                 <div className="space-y-2">
                   <Label>{t("避免说法", "Don't Say")}</Label>
                   <ChipInput
-                    values={editEntry.dont_say}
-                    onChange={(values) => setEditEntry({ ...editEntry, dont_say: values })}
+                    value={editEntry.dont_say}
+                    onChange={(value) => setEditEntry({ ...editEntry, dont_say: value })}
                     disabled={isViewMode}
                     placeholder={t("输入示例后按回车", "Type and press Enter")}
                   />
@@ -613,8 +619,8 @@ export default function LexiconPage() {
                 <div className="space-y-2">
                   <Label>{t("常用搭配", "Collocations")}</Label>
                   <ChipInput
-                    values={editEntry.collocations}
-                    onChange={(values) => setEditEntry({ ...editEntry, collocations: values })}
+                    value={editEntry.collocations}
+                    onChange={(value) => setEditEntry({ ...editEntry, collocations: value })}
                     disabled={isViewMode}
                     placeholder={t("输入搭配后按回车", "Type and press Enter")}
                   />
@@ -632,10 +638,11 @@ export default function LexiconPage() {
               />
             </TabsContent>
           </Tabs>
+          </div>
 
           {/* Actions */}
           {!isViewMode && (
-            <div className="flex justify-end gap-3 pt-6 mt-6 border-t border-border/50">
+            <div className="flex justify-end gap-3 pt-4 border-t border-border/50 shrink-0 bg-background">
               <Button
                 variant="outline"
                 onClick={() => setIsDrawerOpen(false)}

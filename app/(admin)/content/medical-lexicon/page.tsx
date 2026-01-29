@@ -14,6 +14,7 @@ import {
   Stethoscope,
   Database,
   HardDrive,
+  History,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -64,16 +65,24 @@ import {
   upsertMedicalLexicon,
   deleteMedicalLexiconById,
   contentItemToUI,
+  createContentVersion,
   type MedicalLexiconUIEntry,
+  type MedicalLexiconItem,
+  type ContentVersion,
 } from "@/lib/supabase/content-items-service";
 import {
   getMedicalLexicon as getLocalMedicalLexicon,
   saveMedicalLexiconEntry as saveLocalMedicalLexicon,
   deleteMedicalLexiconEntry as deleteLocalMedicalLexicon,
+  mockCreateVersion,
   type MedicalLexiconEntry,
+  type MockContentVersion,
 } from "@/lib/admin-mock";
+import { VersionHistory } from "@/components/admin/version-history";
+import { VersionDiffViewer } from "@/components/admin/version-diff-viewer";
 
-const generateId = () => `ml_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+// Generate a standard UUID v4 format compatible with Supabase UUID column
+const generateId = () => crypto.randomUUID();
 
 const emptyEntry: MedicalLexiconUIEntry = {
   id: "",
@@ -178,23 +187,40 @@ export default function MedicalLexiconPage() {
     entry: null,
   });
 
+  // Version comparison state
+  const [compareVersions, setCompareVersions] = useState<{
+    open: boolean;
+    oldVersion: ContentVersion | MockContentVersion | null;
+    newVersion: ContentVersion | MockContentVersion | null;
+  }>({
+    open: false,
+    oldVersion: null,
+    newVersion: null,
+  });
+
   const refreshData = useCallback(async () => {
     setIsLoading(true);
     try {
       if (useSupabase && isSupabaseConfigured) {
-        const data = await fetchMedicalLexicon();
-        setEntries(data.map(contentItemToUI));
-      } else {
-        const data = getLocalMedicalLexicon();
-        setEntries(data.map(localToUI));
+        try {
+          const data = await fetchMedicalLexicon();
+          setEntries(data.map(contentItemToUI as (item: MedicalLexiconItem) => MedicalLexiconUIEntry));
+          return;
+        } catch (supabaseError) {
+          console.warn("Supabase fetch failed, falling back to local data:", supabaseError);
+          // Fallback to local mock data on Supabase error
+        }
       }
+      // Use local mock data
+      const data = getLocalMedicalLexicon();
+      setEntries(data.map(localToUI));
     } catch (error) {
       console.error("Error fetching data:", error);
-      toast.error(t("加载数据失败", "Failed to load data"));
+      toast.error(locale === "zh" ? "加载数据失败" : "Failed to load data");
     } finally {
       setIsLoading(false);
     }
-  }, [useSupabase, t]);
+  }, [useSupabase, locale]);
 
   useEffect(() => {
     refreshData();
@@ -276,14 +302,42 @@ export default function MedicalLexiconPage() {
     };
 
     try {
+      const isExisting = entries.find((e) => e.id === editEntry.id);
+      const changeSummary = publish
+        ? t("发布内容", "Published content")
+        : isExisting
+        ? t("更新内容", "Updated content")
+        : t("创建内容", "Created content");
+
       if (useSupabase && isSupabaseConfigured) {
         const result = await upsertMedicalLexicon(updated);
         if (!result) {
           throw new Error("Failed to save to Supabase");
         }
+        // Create version snapshot after save
+        await createContentVersion(updated.id, changeSummary, user?.id);
       } else {
         // Save to local mock
         saveLocalMedicalLexicon(uiToLocal(updated));
+        // Create mock version snapshot
+        mockCreateVersion(updated.id, {
+          term: updated.term,
+          pinyin: updated.pinyin,
+          definition: updated.definition,
+          usage: {
+            say_it_like: updated.say_it_like,
+            dont_say: updated.dont_say,
+            collocations: updated.collocations,
+          },
+        }, {
+          title: updated.term,
+          slug: updated.publishing.slug,
+          seo_json: updated.publishing.seo as Record<string, unknown>,
+          geo_json: updated.publishing.geo as Record<string, unknown>,
+          status: updated.publishing.status,
+          changeSummary,
+          createdBy: user?.name,
+        });
       }
 
       await refreshData();
@@ -499,12 +553,16 @@ export default function MedicalLexiconPage() {
           </SheetHeader>
 
           <Tabs defaultValue="content" className="mt-6">
-            <TabsList className="grid w-full grid-cols-2 rounded-xl bg-secondary/50">
+            <TabsList className="grid w-full grid-cols-3 rounded-xl bg-secondary/50">
               <TabsTrigger value="content" className="rounded-lg">
                 {t("内容", "Content")}
               </TabsTrigger>
               <TabsTrigger value="publishing" className="rounded-lg">
                 {t("发布设置", "Publishing")}
+              </TabsTrigger>
+              <TabsTrigger value="history" className="rounded-lg">
+                <History className="mr-1 h-3 w-3" />
+                {t("历史版本", "History")}
               </TabsTrigger>
             </TabsList>
 
@@ -590,6 +648,37 @@ export default function MedicalLexiconPage() {
                 faq={editEntry.publishing.faq}
               />
             </TabsContent>
+
+            <TabsContent value="history" className="mt-4">
+              {editEntry.id && entries.find((e) => e.id === editEntry.id) ? (
+                <VersionHistory
+                  contentId={editEntry.id}
+                  locale={locale === "zh" ? "zh" : "en"}
+                  onRollback={async (versionId) => {
+                    // Refresh after rollback
+                    await refreshData();
+                    // Find the updated entry and refresh the edit form
+                    const updated = entries.find((e) => e.id === editEntry.id);
+                    if (updated) {
+                      setEditEntry(updated);
+                    }
+                    toast.success(t("已回滚到所选版本", "Rolled back to selected version"));
+                  }}
+                  onCompare={(oldVer, newVer) => {
+                    setCompareVersions({
+                      open: true,
+                      oldVersion: oldVer,
+                      newVersion: newVer,
+                    });
+                  }}
+                />
+              ) : (
+                <div className="text-center py-12 text-muted-foreground">
+                  <History className="w-10 h-10 mx-auto mb-3 opacity-50" />
+                  <p>{t("保存后可查看版本历史", "Save to view version history")}</p>
+                </div>
+              )}
+            </TabsContent>
           </Tabs>
 
           {/* Actions */}
@@ -648,6 +737,17 @@ export default function MedicalLexiconPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Version Comparison Dialog */}
+      {compareVersions.oldVersion && compareVersions.newVersion && (
+        <VersionDiffViewer
+          open={compareVersions.open}
+          onClose={() => setCompareVersions({ open: false, oldVersion: null, newVersion: null })}
+          oldVersion={compareVersions.oldVersion}
+          newVersion={compareVersions.newVersion}
+          locale={locale === "zh" ? "zh" : "en"}
+        />
+      )}
     </div>
   );
 }

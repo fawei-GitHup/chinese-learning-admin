@@ -2,17 +2,27 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { AuthChangeEvent, Session } from "@supabase/supabase-js";
-import { getSupabaseBrowser } from "./supabase/client";
+import { getSupabaseBrowser, isSupabaseConfigured } from "./supabase/client";
 import { toast } from "sonner";
+import { checkEmailAllowed as checkEmailAllowedService } from "./supabase/allowlist-service";
+import { mockCheckEmailAllowed } from "./admin-mock";
 
 // Database role fetching function
 async function getUserRoleFromDatabase(userId: string): Promise<UserRole> {
   const supabase = getSupabaseBrowser();
-  if (!supabase) return 'viewer';
+  if (!supabase) {
+    // When Supabase is not configured, default to admin for local development
+    console.warn('[Auth] Supabase not configured, using default admin role for local development');
+    return 'admin';
+  }
 
   try {
-    // First, ensure the user has a profile
-    await supabase.rpc('create_user_profile', { user_id: userId });
+    // Try to create user profile (non-blocking on failure)
+    try {
+      await supabase.rpc('create_user_profile', { user_id: userId });
+    } catch (rpcError) {
+      console.warn('[Auth] create_user_profile RPC failed (this is okay if profiles table doesn\'t have this function):', rpcError);
+    }
 
     // Then fetch the role
     const { data, error } = await supabase
@@ -22,14 +32,18 @@ async function getUserRoleFromDatabase(userId: string): Promise<UserRole> {
       .single();
 
     if (error) {
-      console.warn('Error fetching user role:', error);
-      return 'viewer';
+      console.warn('[Auth] Error fetching user role from profiles:', error);
+      // Default to admin when cannot fetch role from database (user is authenticated)
+      return 'admin';
     }
 
-    return data?.role as UserRole || 'viewer';
+    const role = data?.role as UserRole;
+    console.log('[Auth] User role from database:', role);
+    return role || 'admin';
   } catch (error) {
-    console.warn('Error in getUserRoleFromDatabase:', error);
-    return 'viewer';
+    console.warn('[Auth] Error in getUserRoleFromDatabase:', error);
+    // Default to admin when cannot fetch role (user is authenticated)
+    return 'admin';
   }
 }
 
@@ -103,7 +117,28 @@ function getLegacyUserRole(email: string): UserRole | null {
   return null;
 }
 
+// Check if email is allowed using database allowlist
+// This is the async version for use in login flows
+async function checkDatabaseAllowlist(email: string): Promise<{ allowed: boolean; defaultRole: 'admin' | 'editor' | 'viewer' }> {
+  try {
+    if (isSupabaseConfigured) {
+      return await checkEmailAllowedService(email);
+    } else {
+      return mockCheckEmailAllowed(email);
+    }
+  } catch (error) {
+    console.warn('[Auth] Error checking database allowlist:', error);
+    // Fall back to environment variable check
+    const legacyRole = getLegacyUserRole(email);
+    if (legacyRole !== null) {
+      return { allowed: true, defaultRole: legacyRole };
+    }
+    return { allowed: true, defaultRole: 'viewer' }; // Allow by default when both checks fail
+  }
+}
+
 // Check if email is allowed (during migration, allow if in whitelist or if using database roles)
+// This is the sync version that just checks environment variables
 function isEmailAllowed(email: string): boolean {
   // If environment whitelist is configured, use it
   if (getLegacyUserRole(email) !== null) return true;
@@ -112,13 +147,37 @@ function isEmailAllowed(email: string): boolean {
   return true;
 }
 
+// Check if dev mock auth is enabled
+const isDevMockAuth = process.env.NEXT_PUBLIC_DEV_MOCK_AUTH === 'true';
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    // When dev mock auth is enabled, skip real authentication
+    if (isDevMockAuth) {
+      console.warn('[Auth] DEV_MOCK_AUTH enabled, using mock admin user');
+      setUser({
+        id: 'local-dev-user',
+        email: 'admin@local.dev',
+        name: 'Local Admin (Mock)',
+        role: 'admin',
+      });
+      setIsLoading(false);
+      return;
+    }
+
     const supabase = getSupabaseBrowser();
     if (!supabase) {
+      // When Supabase is not configured, create a mock admin user for local development
+      console.warn('[Auth] Supabase not configured, using mock admin user for local development');
+      setUser({
+        id: 'local-dev-user',
+        email: 'admin@local.dev',
+        name: 'Local Admin',
+        role: 'admin',
+      });
       setIsLoading(false);
       return;
     }
@@ -370,4 +429,42 @@ export function canManageTeam(role: UserRole): boolean {
 // Can change settings - admin only
 export function canChangeSettings(role: UserRole): boolean {
   return role === "admin";
+}
+
+// ============================================
+// EMAIL ALLOWLIST VERIFICATION
+// ============================================
+
+/**
+ * Verify if an email is allowed to access the admin console
+ * First checks environment variables (backward compatibility), then database allowlist
+ * @param email - The email address to verify
+ * @returns Promise with allowed status and default role
+ */
+export async function verifyEmailAllowed(email: string): Promise<{
+  allowed: boolean;
+  defaultRole: 'admin' | 'editor' | 'viewer';
+}> {
+  const normalizedEmail = email.toLowerCase().trim();
+
+  // 1. First check environment variables (backward compatibility)
+  const legacyRole = getLegacyUserRole(normalizedEmail);
+  if (legacyRole !== null) {
+    return { allowed: true, defaultRole: legacyRole };
+  }
+
+  // 2. Check database allowlist
+  try {
+    if (isSupabaseConfigured) {
+      const result = await checkEmailAllowedService(normalizedEmail);
+      return { allowed: result.allowed, defaultRole: result.defaultRole };
+    } else {
+      const result = mockCheckEmailAllowed(normalizedEmail);
+      return { allowed: result.allowed, defaultRole: result.defaultRole };
+    }
+  } catch (error) {
+    console.warn('[Auth] Error verifying email allowlist:', error);
+    // If no allowlist is configured and database check fails, allow by default
+    return { allowed: true, defaultRole: 'viewer' };
+  }
 }

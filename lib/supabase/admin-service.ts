@@ -73,8 +73,17 @@ export interface SupabaseLexicon {
   id: string;
   term: string;
   pinyin: string;
-  definition: string;
-  usage: {
+  english: string;  // Required by database schema
+  category: string; // Required by database schema
+  difficulty: string; // Required by database schema
+  definition?: string;
+  example_sentence?: string;
+  example_pinyin?: string;
+  example_translation?: string;
+  audio_url?: string;
+  related_terms?: string[];
+  notes?: string;
+  usage?: {
     say_it_like: string[];
     dont_say: string[];
     collocations: string[];
@@ -390,4 +399,208 @@ export async function unpublishLexicon(id: string): Promise<boolean> {
   }
 
   return !error;
+}
+
+// ============================================
+// PROFILES / USER MANAGEMENT
+// ============================================
+
+export interface Profile {
+  id: string;
+  email: string;
+  name: string | null;
+  avatar_url: string | null;
+  role: 'admin' | 'editor' | 'viewer';
+  is_active: boolean;
+  last_login_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserStats {
+  total_users: number;
+  admin_count: number;
+  editor_count: number;
+  viewer_count: number;
+  active_count: number;
+  inactive_count: number;
+}
+
+/**
+ * 获取所有用户（需要 admin 权限）
+ */
+export async function fetchAllProfiles(): Promise<Profile[]> {
+  if (!isSupabaseConfigured) return [];
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return [];
+
+  try {
+    const { data, error } = await supabase.rpc('get_all_profiles_with_email');
+
+    if (error) {
+      console.error("[Supabase] Error fetching profiles:", error);
+      return [];
+    }
+
+    return (data || []).map((item: any) => ({
+      id: item.id,
+      email: item.email,
+      name: item.name,
+      avatar_url: item.avatar_url,
+      role: item.role as 'admin' | 'editor' | 'viewer',
+      is_active: item.is_active ?? true,
+      last_login_at: item.last_login_at,
+      created_at: item.created_at,
+      updated_at: item.updated_at,
+    }));
+  } catch (error) {
+    console.error("[Supabase] Exception fetching profiles:", error);
+    return [];
+  }
+}
+
+/**
+ * 获取用户详情
+ */
+export async function fetchProfileById(id: string): Promise<Profile | null> {
+  if (!isSupabaseConfigured) return null;
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return null;
+
+  try {
+    // 获取所有用户然后过滤（因为 RPC 函数不支持单个用户查询）
+    const profiles = await fetchAllProfiles();
+    return profiles.find(p => p.id === id) || null;
+  } catch (error) {
+    console.error("[Supabase] Exception fetching profile by id:", error);
+    return null;
+  }
+}
+
+/**
+ * 更新用户角色
+ */
+export async function updateProfileRole(
+  id: string, 
+  role: 'admin' | 'editor' | 'viewer'
+): Promise<{ success: boolean; error?: string }> {
+  if (!isSupabaseConfigured) return { success: false, error: 'Supabase not configured' };
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return { success: false, error: 'Supabase client not available' };
+
+  try {
+    const { data, error } = await supabase.rpc('admin_update_user_role', {
+      target_user_id: id,
+      new_role: role,
+    });
+
+    if (error) {
+      console.error("[Supabase] Error updating user role:", error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("[Supabase] Exception updating user role:", error);
+    return { success: false, error: error.message || 'Unknown error' };
+  }
+}
+
+/**
+ * 更新用户状态
+ */
+export async function updateProfileStatus(
+  id: string, 
+  isActive: boolean
+): Promise<{ success: boolean; error?: string }> {
+  if (!isSupabaseConfigured) return { success: false, error: 'Supabase not configured' };
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return { success: false, error: 'Supabase client not available' };
+
+  try {
+    const { data, error } = await supabase.rpc('admin_update_user_status', {
+      target_user_id: id,
+      new_status: isActive,
+    });
+
+    if (error) {
+      console.error("[Supabase] Error updating user status:", error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("[Supabase] Exception updating user status:", error);
+    return { success: false, error: error.message || 'Unknown error' };
+  }
+}
+
+/**
+ * 搜索用户
+ */
+export async function searchProfiles(query: string): Promise<Profile[]> {
+  if (!isSupabaseConfigured) return [];
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return [];
+
+  try {
+    const { data, error } = await supabase.rpc('search_profiles', {
+      search_query: query,
+    });
+
+    if (error) {
+      console.error("[Supabase] Error searching profiles:", error);
+      return [];
+    }
+
+    return (data || []).map((item: any) => ({
+      id: item.id,
+      email: item.email,
+      name: item.name,
+      avatar_url: item.avatar_url,
+      role: item.role as 'admin' | 'editor' | 'viewer',
+      is_active: item.is_active ?? true,
+      last_login_at: item.last_login_at,
+      created_at: item.created_at,
+      updated_at: item.updated_at,
+    }));
+  } catch (error) {
+    console.error("[Supabase] Exception searching profiles:", error);
+    return [];
+  }
+}
+
+/**
+ * 获取用户统计
+ */
+export async function fetchUserStats(): Promise<UserStats | null> {
+  if (!isSupabaseConfigured) return null;
+  const supabase = getSupabaseBrowser();
+  if (!supabase) return null;
+
+  try {
+    const { data, error } = await supabase.rpc('get_user_stats');
+
+    if (error) {
+      console.error("[Supabase] Error fetching user stats:", error);
+      return null;
+    }
+
+    if (data && data.length > 0) {
+      const stats = data[0];
+      return {
+        total_users: Number(stats.total_users) || 0,
+        admin_count: Number(stats.admin_count) || 0,
+        editor_count: Number(stats.editor_count) || 0,
+        viewer_count: Number(stats.viewer_count) || 0,
+        active_count: Number(stats.active_count) || 0,
+        inactive_count: Number(stats.inactive_count) || 0,
+      };
+    }
+
+    return null;
+  } catch (error) {
+    console.error("[Supabase] Exception fetching user stats:", error);
+    return null;
+  }
 }

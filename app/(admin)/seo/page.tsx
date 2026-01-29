@@ -15,6 +15,7 @@ import {
   ExternalLink,
   ChevronRight,
   Download,
+  Code,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -22,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -33,6 +35,8 @@ import { getLessons, getReadings, getMedicalDialogs, getGrammarRules } from "@/l
 import type { Lesson, Reading, MedicalDialog, GrammarRule } from "@/lib/mock/data";
 import { toast } from "sonner";
 import { useAdminLocale } from "@/lib/admin-locale";
+import { StructuredDataTemplatePicker } from "@/components/admin/structured-data-template-picker";
+import { type ExtendedContentType, normalizeContentType } from "@/lib/structured-data-templates";
 
 type ContentItem = {
   id: string;
@@ -53,6 +57,8 @@ export default function SEOToolsPage() {
   const [selectedItem, setSelectedItem] = useState<ContentItem | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [selectedType, setSelectedType] = useState<string>("all");
+  const [jsonLdContent, setJsonLdContent] = useState<string>("");
+  const [selectedTemplateType, setSelectedTemplateType] = useState<ExtendedContentType>("lesson");
 
   useEffect(() => {
     loadAllContent();
@@ -305,6 +311,10 @@ For API access or content licensing: contact@chineselearning.example.com
           <TabsTrigger value="programmatic" className="rounded-lg data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
             <Layers className="h-4 w-4 mr-2" />
             {t("程序化页面", "Programmatic Pages")}
+          </TabsTrigger>
+          <TabsTrigger value="structured-data" className="rounded-lg data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+            <Code className="h-4 w-4 mr-2" />
+            {t("结构化数据模板", "Structured Data Templates")}
           </TabsTrigger>
         </TabsList>
 
@@ -771,6 +781,186 @@ ${generateSitemap()
               </ScrollArea>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* Structured Data Templates Tab */}
+        <TabsContent value="structured-data" className="space-y-6">
+          <div className="flex gap-6 h-[calc(100vh-16rem)]">
+            {/* Left: Template Picker */}
+            <div className="w-96 flex-shrink-0 space-y-4">
+              {/* Content Type Selector */}
+              <Card className="glass-card border-border/50 rounded-2xl">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg">{t("选择内容类型", "Select Content Type")}</CardTitle>
+                  <CardDescription>
+                    {t("不同内容类型有不同的推荐模板", "Different content types have different recommended templates")}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Select
+                    value={selectedTemplateType}
+                    onValueChange={(value) => setSelectedTemplateType(value as ExtendedContentType)}
+                  >
+                    <SelectTrigger className="bg-secondary/50 border-border/50 rounded-xl">
+                      <SelectValue placeholder={t("选择内容类型", "Select content type")} />
+                    </SelectTrigger>
+                    <SelectContent className="glass-card border-border/50 rounded-xl">
+                      <SelectItem value="lesson">{t("课程", "Lessons")}</SelectItem>
+                      <SelectItem value="reading">{t("阅读", "Readings")}</SelectItem>
+                      <SelectItem value="grammar">{t("语法", "Grammar")}</SelectItem>
+                      <SelectItem value="lexicon">{t("词典", "Lexicon")}</SelectItem>
+                      <SelectItem value="medical_lexicon">{t("医学词典", "Medical Lexicon")}</SelectItem>
+                      <SelectItem value="scenarios">{t("情景", "Scenarios")}</SelectItem>
+                      <SelectItem value="medical_scenario">{t("医学情景", "Medical Scenarios")}</SelectItem>
+                      <SelectItem value="medical_dialog">{t("医学对话", "Medical Dialogs")}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </CardContent>
+              </Card>
+
+              {/* Template Picker */}
+              <StructuredDataTemplatePicker
+                contentType={selectedTemplateType}
+                onApply={(jsonLd) => setJsonLdContent(jsonLd)}
+                currentValue={jsonLdContent}
+              />
+            </div>
+
+            {/* Right: JSON-LD Editor */}
+            <Card className="flex-1 glass-card border-border/50 rounded-2xl">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <FileJson className="h-5 w-5 text-primary" />
+                      {t("JSON-LD 编辑器", "JSON-LD Editor")}
+                    </CardTitle>
+                    <CardDescription>
+                      {t("编辑和预览结构化数据", "Edit and preview structured data")}
+                    </CardDescription>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      className="rounded-xl bg-transparent"
+                      onClick={() => {
+                        if (jsonLdContent) {
+                          handleCopy(jsonLdContent, "jsonld-editor");
+                        }
+                      }}
+                      disabled={!jsonLdContent}
+                    >
+                      {copiedField === "jsonld-editor" ? (
+                        <>
+                          <Check className="h-4 w-4 mr-2 text-success" />
+                          {t("已复制！", "Copied!")}
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-4 w-4 mr-2" />
+                          {t("复制", "Copy")}
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="rounded-xl bg-transparent"
+                      onClick={() => setJsonLdContent("")}
+                      disabled={!jsonLdContent}
+                    >
+                      {t("清空", "Clear")}
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Editor */}
+                <div className="space-y-2">
+                  <Textarea
+                    value={jsonLdContent}
+                    onChange={(e) => setJsonLdContent(e.target.value)}
+                    placeholder={t(
+                      "从左侧选择模板，或直接在此输入 JSON-LD...",
+                      "Select a template from the left, or enter JSON-LD directly..."
+                    )}
+                    className="min-h-[300px] font-mono text-sm bg-secondary/30 border-border/30 rounded-xl resize-none"
+                  />
+                </div>
+
+                {/* Validation & Preview */}
+                {jsonLdContent && (
+                  <div className="space-y-4">
+                    {/* JSON Validation */}
+                    <div className="p-3 rounded-xl bg-secondary/30 border border-border/30">
+                      <div className="flex items-center gap-2">
+                        {(() => {
+                          try {
+                            JSON.parse(jsonLdContent);
+                            return (
+                              <>
+                                <Check className="h-4 w-4 text-success" />
+                                <span className="text-sm text-success">
+                                  {t("JSON 格式有效", "Valid JSON format")}
+                                </span>
+                              </>
+                            );
+                          } catch (e) {
+                            return (
+                              <>
+                                <span className="h-4 w-4 text-destructive">✕</span>
+                                <span className="text-sm text-destructive">
+                                  {t("JSON 格式无效", "Invalid JSON format")}
+                                </span>
+                              </>
+                            );
+                          }
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* Script Tag Preview */}
+                    <div>
+                      <p className="text-sm font-medium mb-2">{t("HTML 嵌入代码", "HTML Embed Code")}</p>
+                      <div className="relative">
+                        <pre className="p-4 rounded-xl bg-secondary/30 border border-border/30 text-xs font-mono overflow-x-auto">
+                          {`<script type="application/ld+json">
+${jsonLdContent}
+</script>`}
+                        </pre>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="absolute top-2 right-2 h-7 rounded-lg"
+                          onClick={() => handleCopy(`<script type="application/ld+json">\n${jsonLdContent}\n</script>`, "script-tag")}
+                        >
+                          {copiedField === "script-tag" ? (
+                            <Check className="h-4 w-4 text-success" />
+                          ) : (
+                            <Copy className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Empty State */}
+                {!jsonLdContent && (
+                  <div className="h-40 flex items-center justify-center text-center">
+                    <div>
+                      <Code className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                      <p className="text-muted-foreground">
+                        {t(
+                          "选择左侧的模板开始编辑结构化数据",
+                          "Select a template from the left to start editing structured data"
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
       </Tabs>
     </div>

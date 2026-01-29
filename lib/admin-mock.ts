@@ -609,3 +609,1006 @@ export function exportMedicalLexiconJSON(): string {
   const data = getMedicalLexicon().filter(e => e.status === "published");
   return JSON.stringify(data, null, 2);
 }
+
+// ============================================
+// MEDICAL SCENARIOS (content_items type='medical_scenario')
+// Local storage for when Supabase is not configured
+// ============================================
+export interface MedicalScenarioEntry {
+  id: string;
+  title: string;
+  slug: string;
+  category: string;
+  difficulty: "Beginner" | "Intermediate" | "Advanced";
+  conversation: ConversationLine[];
+  key_phrases: string[];
+  checklist: string[];
+  warnings: ScenarioWarning[];
+  // GEO/SEO publishing fields
+  geo_intro: string;
+  key_takeaways: string[];
+  faq_json: FAQItem[];
+  seo_title: string;
+  seo_description: string;
+  // Meta
+  status: ContentStatus;
+  createdAt: string;
+  updatedAt: string;
+  publishedAt?: string;
+  author: string;
+}
+
+export const mockMedicalScenarioItems: MedicalScenarioEntry[] = [];
+
+const STORAGE_KEY_MEDICAL_SCENARIOS = "admin_medical_scenarios";
+
+export function getMedicalScenarioItems(): MedicalScenarioEntry[] {
+  if (typeof window === "undefined") return mockMedicalScenarioItems;
+  const stored = localStorage.getItem(STORAGE_KEY_MEDICAL_SCENARIOS);
+  return stored ? JSON.parse(stored) : mockMedicalScenarioItems;
+}
+
+export function saveMedicalScenarioEntry(entry: MedicalScenarioEntry) {
+  const entries = getMedicalScenarioItems();
+  const index = entries.findIndex((e) => e.id === entry.id);
+  if (index >= 0) {
+    entries[index] = entry;
+  } else {
+    entries.push(entry);
+  }
+  localStorage.setItem(STORAGE_KEY_MEDICAL_SCENARIOS, JSON.stringify(entries));
+}
+
+export function deleteMedicalScenarioEntry(id: string) {
+  const entries = getMedicalScenarioItems().filter((e) => e.id !== id);
+  localStorage.setItem(STORAGE_KEY_MEDICAL_SCENARIOS, JSON.stringify(entries));
+}
+
+export function exportMedicalScenarioJSON(): string {
+  const data = getMedicalScenarioItems().filter(e => e.status === "published");
+  return JSON.stringify(data, null, 2);
+}
+
+// ============================================
+// MEDICAL DIALOGS (content_items type='medical_dialog')
+// Local storage for when Supabase is not configured
+// ============================================
+export interface MedicalDialogExchange {
+  speaker: string;
+  text: string;
+  pinyin?: string;
+}
+
+export interface MedicalDialogParticipant {
+  name: string;
+  role: string;
+}
+
+export interface MedicalDialogVocabulary {
+  term: string;
+  definition: string;
+  pinyin?: string;
+}
+
+export interface MedicalDialogEntry {
+  id: string;
+  title: string;
+  slug: string;
+  dialog_type: "conversation" | "article";
+  participants: MedicalDialogParticipant[];
+  exchanges: MedicalDialogExchange[];
+  article_body?: string;
+  vocabulary: MedicalDialogVocabulary[];
+  medical_context?: string;
+  // GEO/SEO publishing fields
+  geo_snippet: string;
+  key_points: string[];
+  faq_json: FAQItem[];
+  seo_title: string;
+  seo_description: string;
+  // Meta
+  status: ContentStatus;
+  createdAt: string;
+  updatedAt: string;
+  publishedAt?: string;
+  author: string;
+}
+
+export const mockMedicalDialogItems: MedicalDialogEntry[] = [
+  {
+    id: "md1",
+    title: "看医生 - Seeing a Doctor",
+    slug: "kan-yisheng-seeing-doctor",
+    dialog_type: "conversation",
+    participants: [
+      { name: "李明", role: "Patient" },
+      { name: "王医生", role: "Doctor" },
+    ],
+    exchanges: [
+      { speaker: "王医生", text: "你好，今天哪里不舒服？", pinyin: "Nǐ hǎo, jīntiān nǎlǐ bù shūfú?" },
+      { speaker: "李明", text: "医生，我头疼，而且有点儿发烧。", pinyin: "Yīshēng, wǒ tóuténg, érqiě yǒudiǎnr fāshāo." },
+      { speaker: "王医生", text: "头疼多长时间了？", pinyin: "Tóuténg duō cháng shíjiān le?" },
+      { speaker: "李明", text: "已经两天了。", pinyin: "Yǐjīng liǎng tiān le." },
+      { speaker: "王医生", text: "让我检查一下。请张开嘴。", pinyin: "Ràng wǒ jiǎnchá yīxià. Qǐng zhāngkāi zuǐ." },
+    ],
+    vocabulary: [
+      { term: "头疼", definition: "headache", pinyin: "tóuténg" },
+      { term: "发烧", definition: "fever", pinyin: "fāshāo" },
+      { term: "检查", definition: "to examine", pinyin: "jiǎnchá" },
+    ],
+    medical_context: "This conversation demonstrates a typical doctor-patient interaction at a Chinese hospital or clinic.",
+    geo_snippet: "Learn essential Chinese medical dialogue for visiting a doctor. This conversation covers describing symptoms like headache and fever to healthcare professionals.",
+    key_points: [
+      "哪里不舒服 is the standard question for 'what's bothering you'",
+      "Use 有点儿 to describe mild symptoms",
+      "Duration of symptoms uses 多长时间了",
+      "张开嘴 means 'open your mouth' for examination",
+    ],
+    faq_json: [
+      { question: "How do I describe a headache in Chinese?", answer: "我头疼 (wǒ tóuténg) means 'I have a headache'." },
+    ],
+    seo_title: "Chinese Medical Dialogue - Visiting the Doctor",
+    seo_description: "Learn Chinese phrases for seeing a doctor, describing symptoms, and understanding medical examinations.",
+    status: "published",
+    createdAt: "2025-01-10T10:00:00Z",
+    updatedAt: "2025-01-15T14:00:00Z",
+    publishedAt: "2025-01-15T14:00:00Z",
+    author: "Admin User",
+  },
+  {
+    id: "md2",
+    title: "取药 - Picking Up Medicine",
+    slug: "qu-yao-picking-up-medicine",
+    dialog_type: "conversation",
+    participants: [
+      { name: "患者", role: "Patient" },
+      { name: "药剂师", role: "Pharmacist" },
+    ],
+    exchanges: [
+      { speaker: "药剂师", text: "您好，请出示您的处方。", pinyin: "Nín hǎo, qǐng chūshì nín de chǔfāng." },
+      { speaker: "患者", text: "好的，给您。", pinyin: "Hǎo de, gěi nín." },
+      { speaker: "药剂师", text: "这个药一天吃三次，饭后服用。", pinyin: "Zhège yào yī tiān chī sān cì, fàn hòu fúyòng." },
+    ],
+    vocabulary: [
+      { term: "处方", definition: "prescription", pinyin: "chǔfāng" },
+      { term: "服用", definition: "to take (medicine)", pinyin: "fúyòng" },
+    ],
+    medical_context: "Dialogue at a hospital pharmacy when picking up prescribed medication.",
+    geo_snippet: "",
+    key_points: ["处方 is required for certain medications"],
+    faq_json: [],
+    seo_title: "",
+    seo_description: "",
+    status: "draft",
+    createdAt: "2025-01-18T08:00:00Z",
+    updatedAt: "2025-01-20T16:00:00Z",
+    author: "Editor User",
+  },
+];
+
+const STORAGE_KEY_MEDICAL_DIALOGS = "admin_medical_dialogs";
+
+export function getMedicalDialogItems(): MedicalDialogEntry[] {
+  if (typeof window === "undefined") return mockMedicalDialogItems;
+  const stored = localStorage.getItem(STORAGE_KEY_MEDICAL_DIALOGS);
+  if (!stored) {
+    localStorage.setItem(STORAGE_KEY_MEDICAL_DIALOGS, JSON.stringify(mockMedicalDialogItems));
+    return mockMedicalDialogItems;
+  }
+  return JSON.parse(stored);
+}
+
+export function saveMedicalDialogEntry(entry: MedicalDialogEntry) {
+  const entries = getMedicalDialogItems();
+  const index = entries.findIndex((e) => e.id === entry.id);
+  if (index >= 0) {
+    entries[index] = entry;
+  } else {
+    entries.push(entry);
+  }
+  localStorage.setItem(STORAGE_KEY_MEDICAL_DIALOGS, JSON.stringify(entries));
+}
+
+export function deleteMedicalDialogEntry(id: string) {
+  const entries = getMedicalDialogItems().filter((e) => e.id !== id);
+  localStorage.setItem(STORAGE_KEY_MEDICAL_DIALOGS, JSON.stringify(entries));
+}
+
+export function exportMedicalDialogJSON(): string {
+  const data = getMedicalDialogItems().filter(e => e.status === "published");
+  return JSON.stringify(data, null, 2);
+}
+
+// ============================================
+// CONTENT VERSIONS (Mock for when Supabase is not configured)
+// ============================================
+
+export interface MockContentVersion {
+  id: string;
+  content_id: string;
+  version_number: number;
+  title: string;
+  slug: string;
+  content: Record<string, unknown>;
+  seo_json?: Record<string, unknown>;
+  geo_json?: Record<string, unknown>;
+  status: string;
+  created_at: string;
+  created_by?: string;
+  change_summary?: string;
+}
+
+const STORAGE_KEY_CONTENT_VERSIONS = "admin_content_versions";
+
+// In-memory store for versions (localStorage backed)
+function getVersionsStore(): Map<string, MockContentVersion[]> {
+  if (typeof window === "undefined") return new Map();
+  
+  const stored = localStorage.getItem(STORAGE_KEY_CONTENT_VERSIONS);
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored);
+      return new Map(Object.entries(parsed));
+    } catch {
+      return new Map();
+    }
+  }
+  return new Map();
+}
+
+function saveVersionsStore(store: Map<string, MockContentVersion[]>) {
+  if (typeof window === "undefined") return;
+  const obj: Record<string, MockContentVersion[]> = {};
+  store.forEach((value, key) => {
+    obj[key] = value;
+  });
+  localStorage.setItem(STORAGE_KEY_CONTENT_VERSIONS, JSON.stringify(obj));
+}
+
+/**
+ * Create a mock version snapshot for a content item
+ */
+export function mockCreateVersion(
+  contentId: string,
+  content: Record<string, unknown>,
+  options: {
+    title?: string;
+    slug?: string;
+    seo_json?: Record<string, unknown>;
+    geo_json?: Record<string, unknown>;
+    status?: string;
+    changeSummary?: string;
+    createdBy?: string;
+  } = {}
+): MockContentVersion {
+  const store = getVersionsStore();
+  const contentVersions = store.get(contentId) || [];
+  
+  const maxVersion = contentVersions.reduce((max, v) => Math.max(max, v.version_number), 0);
+  const newVersionNumber = maxVersion + 1;
+
+  const newVersion: MockContentVersion = {
+    id: `v-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    content_id: contentId,
+    version_number: newVersionNumber,
+    title: options.title || (content.title as string) || (content.term as string) || "Untitled",
+    slug: options.slug || `item-${contentId.substring(0, 8)}`,
+    content,
+    seo_json: options.seo_json,
+    geo_json: options.geo_json,
+    status: options.status || "draft",
+    created_at: new Date().toISOString(),
+    created_by: options.createdBy,
+    change_summary: options.changeSummary,
+  };
+
+  contentVersions.unshift(newVersion);
+  store.set(contentId, contentVersions);
+  saveVersionsStore(store);
+
+  return newVersion;
+}
+
+/**
+ * Get version history for a content item (mock)
+ */
+export function mockGetVersionHistory(contentId: string): MockContentVersion[] {
+  const store = getVersionsStore();
+  return store.get(contentId) || [];
+}
+
+/**
+ * Get a specific version by ID (mock)
+ */
+export function mockGetVersionById(versionId: string): MockContentVersion | null {
+  const store = getVersionsStore();
+  for (const versions of store.values()) {
+    const found = versions.find(v => v.id === versionId);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * Rollback content to a specific version (mock)
+ * Returns the version data to be applied to the content
+ */
+export function mockRollbackToVersion(
+  contentId: string,
+  versionId: string
+): MockContentVersion | null {
+  const store = getVersionsStore();
+  const contentVersions = store.get(contentId);
+  
+  if (!contentVersions) return null;
+  
+  const targetVersion = contentVersions.find(v => v.id === versionId);
+  if (!targetVersion) return null;
+
+  return targetVersion;
+}
+
+/**
+ * Get the current version number (mock)
+ */
+export function mockGetCurrentVersionNumber(contentId: string): number {
+  const versions = mockGetVersionHistory(contentId);
+  if (versions.length === 0) return 0;
+  return Math.max(...versions.map(v => v.version_number));
+}
+
+/**
+ * Compare two mock versions
+ */
+export interface MockVersionDiff {
+  field: string;
+  label: string;
+  oldValue: unknown;
+  newValue: unknown;
+  hasChanges: boolean;
+}
+
+export function mockCompareVersions(
+  oldVersion: MockContentVersion,
+  newVersion: MockContentVersion
+): MockVersionDiff[] {
+  const diffs: MockVersionDiff[] = [];
+
+  // Compare title
+  diffs.push({
+    field: "title",
+    label: "标题 / Title",
+    oldValue: oldVersion.title,
+    newValue: newVersion.title,
+    hasChanges: oldVersion.title !== newVersion.title,
+  });
+
+  // Compare slug
+  diffs.push({
+    field: "slug",
+    label: "URL 别名 / Slug",
+    oldValue: oldVersion.slug,
+    newValue: newVersion.slug,
+    hasChanges: oldVersion.slug !== newVersion.slug,
+  });
+
+  // Compare status
+  diffs.push({
+    field: "status",
+    label: "状态 / Status",
+    oldValue: oldVersion.status,
+    newValue: newVersion.status,
+    hasChanges: oldVersion.status !== newVersion.status,
+  });
+
+  // Compare content
+  const contentChanged = JSON.stringify(oldVersion.content) !== JSON.stringify(newVersion.content);
+  diffs.push({
+    field: "content",
+    label: "内容 / Content",
+    oldValue: oldVersion.content,
+    newValue: newVersion.content,
+    hasChanges: contentChanged,
+  });
+
+  // Compare SEO
+  const seoChanged = JSON.stringify(oldVersion.seo_json) !== JSON.stringify(newVersion.seo_json);
+  diffs.push({
+    field: "seo_json",
+    label: "SEO 元数据 / SEO Metadata",
+    oldValue: oldVersion.seo_json,
+    newValue: newVersion.seo_json,
+    hasChanges: seoChanged,
+  });
+
+  // Compare GEO
+  const geoChanged = JSON.stringify(oldVersion.geo_json) !== JSON.stringify(newVersion.geo_json);
+  diffs.push({
+    field: "geo_json",
+    label: "GEO 数据 / GEO Data",
+    oldValue: oldVersion.geo_json,
+    newValue: newVersion.geo_json,
+    hasChanges: geoChanged,
+  });
+
+  return diffs;
+}
+
+/**
+ * Clear all versions for a content item (useful for testing)
+ */
+export function mockClearVersions(contentId: string): void {
+  const store = getVersionsStore();
+  store.delete(contentId);
+  saveVersionsStore(store);
+}
+
+// ============================================
+// USER PROFILES (Mock for when Supabase is not configured)
+// ============================================
+
+export interface MockProfile {
+  id: string;
+  email: string;
+  name: string | null;
+  avatar_url: string | null;
+  role: 'admin' | 'editor' | 'viewer';
+  is_active: boolean;
+  last_login_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MockUserStats {
+  total_users: number;
+  admin_count: number;
+  editor_count: number;
+  viewer_count: number;
+  active_count: number;
+  inactive_count: number;
+}
+
+export const mockProfiles: MockProfile[] = [
+  {
+    id: 'mock-admin-1',
+    email: 'admin@example.com',
+    name: '管理员',
+    avatar_url: null,
+    role: 'admin',
+    is_active: true,
+    last_login_at: '2026-01-29T10:00:00Z',
+    created_at: '2025-01-01T00:00:00Z',
+    updated_at: '2026-01-29T10:00:00Z',
+  },
+  {
+    id: 'mock-admin-2',
+    email: 'superadmin@example.com',
+    name: '超级管理员',
+    avatar_url: null,
+    role: 'admin',
+    is_active: true,
+    last_login_at: '2026-01-28T15:30:00Z',
+    created_at: '2024-12-01T00:00:00Z',
+    updated_at: '2026-01-28T15:30:00Z',
+  },
+  {
+    id: 'mock-editor-1',
+    email: 'editor1@example.com',
+    name: '编辑员 A',
+    avatar_url: null,
+    role: 'editor',
+    is_active: true,
+    last_login_at: '2026-01-28T09:00:00Z',
+    created_at: '2025-02-15T00:00:00Z',
+    updated_at: '2026-01-28T09:00:00Z',
+  },
+  {
+    id: 'mock-editor-2',
+    email: 'editor2@example.com',
+    name: '编辑员 B',
+    avatar_url: null,
+    role: 'editor',
+    is_active: true,
+    last_login_at: '2026-01-27T14:00:00Z',
+    created_at: '2025-03-10T00:00:00Z',
+    updated_at: '2026-01-27T14:00:00Z',
+  },
+  {
+    id: 'mock-editor-3',
+    email: 'editor3@example.com',
+    name: '编辑员 C',
+    avatar_url: null,
+    role: 'editor',
+    is_active: false,
+    last_login_at: '2026-01-01T08:00:00Z',
+    created_at: '2025-04-01T00:00:00Z',
+    updated_at: '2026-01-15T10:00:00Z',
+  },
+  {
+    id: 'mock-viewer-1',
+    email: 'viewer1@example.com',
+    name: '查看者 A',
+    avatar_url: null,
+    role: 'viewer',
+    is_active: true,
+    last_login_at: '2026-01-26T11:00:00Z',
+    created_at: '2025-05-01T00:00:00Z',
+    updated_at: '2026-01-26T11:00:00Z',
+  },
+  {
+    id: 'mock-viewer-2',
+    email: 'viewer2@example.com',
+    name: '查看者 B',
+    avatar_url: null,
+    role: 'viewer',
+    is_active: true,
+    last_login_at: '2026-01-25T16:00:00Z',
+    created_at: '2025-06-15T00:00:00Z',
+    updated_at: '2026-01-25T16:00:00Z',
+  },
+  {
+    id: 'mock-viewer-3',
+    email: 'viewer3@example.com',
+    name: null,
+    avatar_url: null,
+    role: 'viewer',
+    is_active: true,
+    last_login_at: null,
+    created_at: '2025-07-20T00:00:00Z',
+    updated_at: '2025-07-20T00:00:00Z',
+  },
+  {
+    id: 'mock-viewer-4',
+    email: 'inactive.user@example.com',
+    name: '已禁用用户',
+    avatar_url: null,
+    role: 'viewer',
+    is_active: false,
+    last_login_at: '2025-10-01T00:00:00Z',
+    created_at: '2025-08-01T00:00:00Z',
+    updated_at: '2025-12-01T00:00:00Z',
+  },
+];
+
+const STORAGE_KEY_PROFILES = "admin_profiles";
+
+/**
+ * Get all mock profiles
+ */
+export function mockFetchAllProfiles(): MockProfile[] {
+  if (typeof window === "undefined") return mockProfiles;
+  
+  const stored = localStorage.getItem(STORAGE_KEY_PROFILES);
+  if (stored) {
+    try {
+      return JSON.parse(stored);
+    } catch {
+      localStorage.setItem(STORAGE_KEY_PROFILES, JSON.stringify(mockProfiles));
+      return mockProfiles;
+    }
+  }
+  
+  localStorage.setItem(STORAGE_KEY_PROFILES, JSON.stringify(mockProfiles));
+  return mockProfiles;
+}
+
+/**
+ * Get mock profile by ID
+ */
+export function mockFetchProfileById(id: string): MockProfile | null {
+  const profiles = mockFetchAllProfiles();
+  return profiles.find(p => p.id === id) || null;
+}
+
+/**
+ * Update mock profile role
+ */
+export function mockUpdateProfileRole(
+  id: string, 
+  role: 'admin' | 'editor' | 'viewer'
+): { success: boolean; error?: string } {
+  const profiles = mockFetchAllProfiles();
+  const profile = profiles.find(p => p.id === id);
+  
+  if (!profile) {
+    return { success: false, error: 'User not found' };
+  }
+  
+  // Check if demoting the last admin
+  if (profile.role === 'admin' && role !== 'admin') {
+    const activeAdmins = profiles.filter(p => p.role === 'admin' && p.is_active);
+    if (activeAdmins.length <= 1) {
+      return { success: false, error: 'Cannot demote: at least one active admin is required' };
+    }
+  }
+  
+  profile.role = role;
+  profile.updated_at = new Date().toISOString();
+  
+  if (typeof window !== "undefined") {
+    localStorage.setItem(STORAGE_KEY_PROFILES, JSON.stringify(profiles));
+  }
+  
+  return { success: true };
+}
+
+/**
+ * Update mock profile status
+ */
+export function mockUpdateProfileStatus(
+  id: string, 
+  isActive: boolean
+): { success: boolean; error?: string } {
+  const profiles = mockFetchAllProfiles();
+  const profile = profiles.find(p => p.id === id);
+  
+  if (!profile) {
+    return { success: false, error: 'User not found' };
+  }
+  
+  // Check if disabling the last admin
+  if (profile.role === 'admin' && !isActive) {
+    const activeAdmins = profiles.filter(p => p.role === 'admin' && p.is_active);
+    if (activeAdmins.length <= 1) {
+      return { success: false, error: 'Cannot disable: at least one active admin is required' };
+    }
+  }
+  
+  profile.is_active = isActive;
+  profile.updated_at = new Date().toISOString();
+  
+  if (typeof window !== "undefined") {
+    localStorage.setItem(STORAGE_KEY_PROFILES, JSON.stringify(profiles));
+  }
+  
+  return { success: true };
+}
+
+/**
+ * Search mock profiles
+ */
+export function mockSearchProfiles(query: string): MockProfile[] {
+  const profiles = mockFetchAllProfiles();
+  const lowerQuery = query.toLowerCase();
+  
+  return profiles.filter(p => 
+    p.email.toLowerCase().includes(lowerQuery) ||
+    (p.name && p.name.toLowerCase().includes(lowerQuery))
+  );
+}
+
+/**
+ * Get mock user stats
+ */
+export function mockFetchUserStats(): MockUserStats {
+  const profiles = mockFetchAllProfiles();
+  
+  return {
+    total_users: profiles.length,
+    admin_count: profiles.filter(p => p.role === 'admin').length,
+    editor_count: profiles.filter(p => p.role === 'editor').length,
+    viewer_count: profiles.filter(p => p.role === 'viewer').length,
+    active_count: profiles.filter(p => p.is_active).length,
+    inactive_count: profiles.filter(p => !p.is_active).length,
+  };
+}
+
+/**
+ * Reset mock profiles to initial state
+ */
+export function mockResetProfiles(): void {
+  if (typeof window !== "undefined") {
+    localStorage.setItem(STORAGE_KEY_PROFILES, JSON.stringify(mockProfiles));
+  }
+}
+
+// ============================================
+// ALLOWED EMAILS (Login Whitelist) Mock Data
+// ============================================
+
+export interface MockAllowedEmail {
+  id: string;
+  email: string;
+  is_domain_pattern: boolean;
+  default_role: 'admin' | 'editor' | 'viewer';
+  notes: string | null;
+  added_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MockAllowlistStats {
+  total: number;
+  domainPatterns: number;
+  adminDefaults: number;
+  editorDefaults: number;
+  viewerDefaults: number;
+}
+
+export const mockAllowedEmails: MockAllowedEmail[] = [
+  {
+    id: 'ae-1',
+    email: 'admin@example.com',
+    is_domain_pattern: false,
+    default_role: 'admin',
+    notes: '系统管理员 / System administrator',
+    added_by: null,
+    created_at: '2025-01-01T00:00:00Z',
+    updated_at: '2025-01-01T00:00:00Z',
+  },
+  {
+    id: 'ae-2',
+    email: '*@company.com',
+    is_domain_pattern: true,
+    default_role: 'editor',
+    notes: '公司域名 / Company domain',
+    added_by: null,
+    created_at: '2025-01-01T00:00:00Z',
+    updated_at: '2025-01-01T00:00:00Z',
+  },
+  {
+    id: 'ae-3',
+    email: 'editor1@example.com',
+    is_domain_pattern: false,
+    default_role: 'editor',
+    notes: '编辑员 / Editor',
+    added_by: null,
+    created_at: '2025-01-05T00:00:00Z',
+    updated_at: '2025-01-05T00:00:00Z',
+  },
+  {
+    id: 'ae-4',
+    email: 'guest@external.com',
+    is_domain_pattern: false,
+    default_role: 'viewer',
+    notes: '外部顾问 / External consultant',
+    added_by: null,
+    created_at: '2025-01-10T00:00:00Z',
+    updated_at: '2025-01-10T00:00:00Z',
+  },
+  {
+    id: 'ae-5',
+    email: '*@partner.org',
+    is_domain_pattern: true,
+    default_role: 'viewer',
+    notes: '合作伙伴组织 / Partner organization',
+    added_by: null,
+    created_at: '2025-01-15T00:00:00Z',
+    updated_at: '2025-01-15T00:00:00Z',
+  },
+];
+
+const STORAGE_KEY_ALLOWED_EMAILS = "admin_allowed_emails";
+
+/**
+ * Helper: Detect if email is a domain pattern
+ */
+function isDomainPattern(email: string): boolean {
+  return email.startsWith('*@');
+}
+
+/**
+ * Helper: Validate email format
+ */
+function isValidEmailFormat(email: string): boolean {
+  if (isDomainPattern(email)) {
+    const domain = email.substring(2);
+    return domain.includes('.') && domain.length > 3;
+  }
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email);
+}
+
+/**
+ * Get all mock allowed emails
+ */
+export function mockFetchAllowedEmails(): MockAllowedEmail[] {
+  if (typeof window === "undefined") return mockAllowedEmails;
+  
+  const stored = localStorage.getItem(STORAGE_KEY_ALLOWED_EMAILS);
+  if (stored) {
+    try {
+      return JSON.parse(stored);
+    } catch {
+      localStorage.setItem(STORAGE_KEY_ALLOWED_EMAILS, JSON.stringify(mockAllowedEmails));
+      return mockAllowedEmails;
+    }
+  }
+  
+  localStorage.setItem(STORAGE_KEY_ALLOWED_EMAILS, JSON.stringify(mockAllowedEmails));
+  return mockAllowedEmails;
+}
+
+/**
+ * Add email to mock allowlist
+ */
+export function mockAddAllowedEmail(
+  email: string,
+  defaultRole: 'admin' | 'editor' | 'viewer' = 'viewer',
+  notes?: string
+): { success: boolean; data?: MockAllowedEmail; error?: string } {
+  const normalizedEmail = email.toLowerCase().trim();
+  
+  if (!isValidEmailFormat(normalizedEmail)) {
+    return { success: false, error: 'Invalid email format / 无效的邮箱格式' };
+  }
+
+  const entries = mockFetchAllowedEmails();
+  
+  // Check for duplicates
+  if (entries.some(e => e.email === normalizedEmail)) {
+    return { success: false, error: 'Email already exists / 邮箱已存在' };
+  }
+
+  const now = new Date().toISOString();
+  const newEntry: MockAllowedEmail = {
+    id: `ae-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    email: normalizedEmail,
+    is_domain_pattern: isDomainPattern(normalizedEmail),
+    default_role: defaultRole,
+    notes: notes || null,
+    added_by: null,
+    created_at: now,
+    updated_at: now,
+  };
+
+  entries.unshift(newEntry);
+  
+  if (typeof window !== "undefined") {
+    localStorage.setItem(STORAGE_KEY_ALLOWED_EMAILS, JSON.stringify(entries));
+  }
+
+  return { success: true, data: newEntry };
+}
+
+/**
+ * Remove email from mock allowlist
+ */
+export function mockRemoveAllowedEmail(id: string): { success: boolean; error?: string } {
+  const entries = mockFetchAllowedEmails();
+  const index = entries.findIndex(e => e.id === id);
+  
+  if (index === -1) {
+    return { success: false, error: 'Entry not found / 条目未找到' };
+  }
+
+  entries.splice(index, 1);
+  
+  if (typeof window !== "undefined") {
+    localStorage.setItem(STORAGE_KEY_ALLOWED_EMAILS, JSON.stringify(entries));
+  }
+
+  return { success: true };
+}
+
+/**
+ * Update mock allowlist entry
+ */
+export function mockUpdateAllowedEmail(
+  id: string,
+  updates: Partial<Pick<MockAllowedEmail, 'default_role' | 'notes'>>
+): { success: boolean; error?: string } {
+  const entries = mockFetchAllowedEmails();
+  const entry = entries.find(e => e.id === id);
+  
+  if (!entry) {
+    return { success: false, error: 'Entry not found / 条目未找到' };
+  }
+
+  if (updates.default_role) {
+    entry.default_role = updates.default_role;
+  }
+  if (updates.notes !== undefined) {
+    entry.notes = updates.notes;
+  }
+  entry.updated_at = new Date().toISOString();
+  
+  if (typeof window !== "undefined") {
+    localStorage.setItem(STORAGE_KEY_ALLOWED_EMAILS, JSON.stringify(entries));
+  }
+
+  return { success: true };
+}
+
+/**
+ * Check if email is allowed (mock version)
+ */
+export function mockCheckEmailAllowed(email: string): { allowed: boolean; defaultRole: 'admin' | 'editor' | 'viewer' } {
+  const normalizedEmail = email.toLowerCase().trim();
+  const entries = mockFetchAllowedEmails();
+
+  // Check exact match first
+  const exactMatch = entries.find(e => e.email === normalizedEmail && !e.is_domain_pattern);
+  if (exactMatch) {
+    return { allowed: true, defaultRole: exactMatch.default_role };
+  }
+
+  // Check domain patterns (prefer longer/more specific patterns)
+  const domainPatterns = entries
+    .filter(e => e.is_domain_pattern)
+    .sort((a, b) => b.email.length - a.email.length);
+
+  for (const pattern of domainPatterns) {
+    const regex = new RegExp('^' + pattern.email.replace('*', '.*') + '$', 'i');
+    if (regex.test(normalizedEmail)) {
+      return { allowed: true, defaultRole: pattern.default_role };
+    }
+  }
+
+  // If no entries exist, allow by default (backward compatibility)
+  if (entries.length === 0) {
+    return { allowed: true, defaultRole: 'viewer' };
+  }
+
+  return { allowed: false, defaultRole: 'viewer' };
+}
+
+/**
+ * Get mock allowlist statistics
+ */
+export function mockGetAllowlistStats(): MockAllowlistStats {
+  const entries = mockFetchAllowedEmails();
+  
+  return {
+    total: entries.length,
+    domainPatterns: entries.filter(e => e.is_domain_pattern).length,
+    adminDefaults: entries.filter(e => e.default_role === 'admin').length,
+    editorDefaults: entries.filter(e => e.default_role === 'editor').length,
+    viewerDefaults: entries.filter(e => e.default_role === 'viewer').length,
+  };
+}
+
+/**
+ * Search mock allowed emails
+ */
+export function mockSearchAllowedEmails(query: string): MockAllowedEmail[] {
+  const entries = mockFetchAllowedEmails();
+  const lowerQuery = query.toLowerCase();
+  
+  return entries.filter(e => 
+    e.email.toLowerCase().includes(lowerQuery) ||
+    (e.notes && e.notes.toLowerCase().includes(lowerQuery))
+  );
+}
+
+/**
+ * Bulk import mock emails
+ */
+export function mockBulkImportEmails(
+  emails: Array<{ email: string; default_role?: 'admin' | 'editor' | 'viewer'; notes?: string }>
+): { success: number; failed: number; errors: Array<{ email: string; error: string }> } {
+  const result = {
+    success: 0,
+    failed: 0,
+    errors: [] as Array<{ email: string; error: string }>,
+  };
+
+  for (const item of emails) {
+    const { success, error } = mockAddAllowedEmail(
+      item.email,
+      item.default_role || 'viewer',
+      item.notes
+    );
+
+    if (success) {
+      result.success++;
+    } else {
+      result.failed++;
+      result.errors.push({
+        email: item.email,
+        error: error || 'Unknown error',
+      });
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Reset mock allowed emails to initial state
+ */
+export function mockResetAllowedEmails(): void {
+  if (typeof window !== "undefined") {
+    localStorage.setItem(STORAGE_KEY_ALLOWED_EMAILS, JSON.stringify(mockAllowedEmails));
+  }
+}

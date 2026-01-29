@@ -18,7 +18,10 @@ import {
   Search as SearchIcon,
   MoreHorizontal,
   Trash2,
+  ShieldCheck,
+  ChevronRight,
 } from "lucide-react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -359,6 +362,41 @@ export default function SettingsPage() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Login Allowlist Management - Admin Only */}
+          {user?.role === "admin" && (
+            <Card className="glass-card border-border/50 rounded-2xl">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-foreground flex items-center gap-2">
+                      <ShieldCheck className="h-5 w-5" />
+                      {t("登录白名单", "Login Allowlist")}
+                    </CardTitle>
+                    <CardDescription className="text-muted-foreground">
+                      {t("管理允许登录系统的邮箱和域名", "Manage emails and domains allowed to log in")}
+                    </CardDescription>
+                  </div>
+                  <Link href="/settings/allowlist">
+                    <Button className="rounded-xl bg-primary hover:bg-primary/90">
+                      {t("管理白名单", "Manage Allowlist")}
+                      <ChevronRight className="ml-2 h-4 w-4" />
+                    </Button>
+                  </Link>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="rounded-xl bg-secondary/30 p-4 border border-border/30">
+                  <p className="text-sm text-muted-foreground">
+                    {t(
+                      "白名单用于控制哪些邮箱地址可以登录到管理后台。支持精确邮箱匹配和域名通配符（如 *@company.com）。",
+                      "The allowlist controls which email addresses can log in to the admin console. Supports exact email matching and domain wildcards (e.g., *@company.com)."
+                    )}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Danger Zone */}
           <Card className="glass-card border-destructive/30 rounded-2xl">

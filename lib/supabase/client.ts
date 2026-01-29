@@ -4,8 +4,12 @@ import { createClient } from "@supabase/supabase-js";
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-// Check if Supabase is configured
-export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
+// Check if dev mock auth is enabled (when true, we skip real Supabase operations)
+export const isDevMockAuth = process.env.NEXT_PUBLIC_DEV_MOCK_AUTH === 'true';
+
+// Check if Supabase is configured AND mock auth is NOT enabled
+// When mock auth is enabled, we treat Supabase as not configured for data operations
+export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey) && !isDevMockAuth;
 
 // Create browser client (only if configured)
 export const supabaseBrowser = isSupabaseConfigured
